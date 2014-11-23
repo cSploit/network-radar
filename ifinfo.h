@@ -14,14 +14,21 @@
  * You should have received a copy of the GNU General Public License
  * along with cSploit.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef SNIFFER_H
-#define SNIFFER_H
 
-#include <pcap.h>
+#ifndef IFINFO_H
+#define IFINFO_H
 
-extern pcap_t *handle;
+#include <stdint.h>
 
-int start_sniff(void);
-void stop_sniff(void);
+#include "netdefs.h"
+
+extern struct if_info {
+  char     name[IFNAMSIZ];
+  uint8_t  eth_addr[ETH_ALEN];
+  uint8_t  ip_addr[4];
+  uint32_t ip_mask;
+} ifinfo;
+
+int get_ifinfo(char *);
 
 #endif

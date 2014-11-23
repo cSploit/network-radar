@@ -26,6 +26,7 @@
 
 #include "netdefs.h"
 #include "sniffer.h"
+#include "ifinfo.h"
 #include "host.h"
 #include "nbns.h"
 #include "prober.h"
@@ -50,7 +51,7 @@ void *prober(void *arg) {
   // build the ethernet header
   
   memset(arp_request.eh.ether_dhost, 0xFF, ETH_ALEN);
-  memcpy(arp_request.eh.ether_shost, if_info.eth_addr, ETH_ALEN);
+  memcpy(arp_request.eh.ether_shost, ifinfo.eth_addr, ETH_ALEN);
   arp_request.eh.ether_type = htons(ETH_P_ARP);
   
   // build arp header
@@ -63,8 +64,8 @@ void *prober(void *arg) {
   
   // build arp message constants
   
-  memcpy(arp_request.arp_sha, if_info.eth_addr, ETH_ALEN);
-  memcpy(arp_request.arp_spa, if_info.ip_addr, 4);
+  memcpy(arp_request.arp_sha, ifinfo.eth_addr, ETH_ALEN);
+  memcpy(arp_request.arp_spa, ifinfo.ip_addr, 4);
   memset(arp_request.arp_tha, 0x00, ETH_ALEN);
   
   max_index = get_host_max_index();

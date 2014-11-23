@@ -29,6 +29,7 @@
 #include "resolver.h"
 #include "prober.h"
 #include "host.h"
+#include "ifinfo.h"
 #include "main.h"
 
 void signal_handler(int signal) {
@@ -75,6 +76,9 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   
+  if(get_ifinfo(argv[1]))
+    return EXIT_FAILURE;
+  
   if(register_signal_handlers())
     return EXIT_FAILURE;
   
@@ -90,7 +94,7 @@ int main(int argc, char **argv) {
   if(start_resolver())
     return EXIT_FAILURE;
   
-  if(start_sniff(argv[1])) {
+  if(start_sniff()) {
     stop_resolver();
     return EXIT_FAILURE;
   }

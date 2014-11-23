@@ -23,7 +23,7 @@
 
 #include "logger.h"
 
-#include "sniffer.h"
+#include "ifinfo.h"
 #include "host.h"
 
 struct hosts_data hosts;
@@ -38,7 +38,7 @@ int init_hosts() {
   int zerobits,b;
   
   for(zerobits=b=0;b<32;b++) {
-    if(!((if_info.ip_mask >> b) & 1))
+    if(!((ifinfo.ip_mask >> b) & 1))
       zerobits++;
   }
   
@@ -52,8 +52,8 @@ int init_hosts() {
     return -1;
   }
   
-  hosts.mask = ~if_info.ip_mask;
-  hosts.base_ip = *((uint32_t *)if_info.ip_addr) & if_info.ip_mask;
+  hosts.mask = ~ifinfo.ip_mask;
+  hosts.base_ip = *((uint32_t *)ifinfo.ip_addr) & ifinfo.ip_mask;
   
   return 0;
 }

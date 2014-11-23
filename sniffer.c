@@ -33,10 +33,9 @@
 #include "nbns.h"
 #include "sniffer.h"
 #include "resolver.h"
+#include "ifinfo.h"
 
 pcap_t *handle;
-
-struct if_info if_info;
 
 pthread_t sniffer_tid = 0;
 
@@ -62,7 +61,7 @@ void on_arp(struct ether_arp *arp) {
   
   // due to our pcap filter this is an ARP reply
   
-  if(memcmp(arp->arp_spa, if_info.ip_addr, 4)) {
+  if(memcmp(arp->arp_spa, ifinfo.ip_addr, 4)) {
     mac = (uint8_t *) arp->arp_sha;
     ip = (uint32_t *) arp->arp_spa;
   } else {
@@ -133,7 +132,7 @@ void on_udp(const unsigned char *packet) {
   udp = NULL;
   nb = NULL;
   
-  if(!memcmp(eth->ether_dhost, if_info.eth_addr, ETH_ALEN)) {
+  if(!memcmp(eth->ether_dhost, ifinfo.eth_addr, ETH_ALEN)) {
     // received UDP packet
     
     udp = (struct udphdr *) (((uint32_t *)ip) + ip->ihl);
@@ -221,77 +220,18 @@ void *sniffer(void *arg) {
   return NULL;
 }
 
-#define L3_NOT_FOUND 1
-#define L2_NOT_FOUND 2
-
 /**
  * @brief start sniffing on @p interface
  * @param interface the interface to sniff on
  * @returns 0 on success, -1 on error.
  */
-int start_sniff(char *interface) {
+int start_sniff() {
   char err_buff[PCAP_ERRBUF_SIZE];
   struct bpf_program filter;
-  pcap_if_t *devlist, *dev;
-  pcap_addr_t *a;
-  struct sockaddr_in *i;
-  struct sockaddr_ll *l;
-  char status;
   
-  err_buff[0] = '\0';
-  status = (L2_NOT_FOUND | L3_NOT_FOUND);
+  *err_buff = '\0';
   
-  if(pcap_findalldevs(&devlist, err_buff)) {
-    print( ERROR, "pcap_findalldevs: %s", err_buff);
-    return -1;
-  }
-  
-  for(dev=devlist; dev && strncmp(dev->name, interface, IFNAMSIZ); dev=dev->next);
-  
-  if(!dev) {
-    print( ERROR, "device '%s' not found", interface);
-    pcap_freealldevs(devlist);
-    return -1;
-  }
-  
-  for(a=dev->addresses;a && status;a=a->next) {
-    
-    print( DEBUG, "sa_family=%02hX", a->addr->sa_family );
-    
-    if(a->addr->sa_family == AF_INET) {
-      i = (struct sockaddr_in *) a->addr;
-      
-      memcpy(if_info.ip_addr, &(i->sin_addr.s_addr), 4);
-      
-      i = (struct sockaddr_in *) a->netmask;
-      
-      if(i) {
-        memcpy(&(if_info.ip_mask), &(i->sin_addr.s_addr), 4);
-        status &= ~(L3_NOT_FOUND);
-      }
-    } else if(a->addr->sa_family == AF_PACKET) {
-      l = (struct sockaddr_ll *) a->addr;
-      
-      if(l->sll_halen != ETH_ALEN) continue;
-      
-      memcpy(if_info.eth_addr, l->sll_addr, ETH_ALEN);
-      status &= ~(L2_NOT_FOUND);
-    }
-  }
-  
-  pcap_freealldevs(devlist);
-  
-  if(status) {
-    if(status & L2_NOT_FOUND) {
-      print( ERROR, "cannot find link layer address");
-    }
-    if(status & L3_NOT_FOUND) {
-      print( ERROR, "cannot find IPv4 address");
-    }
-    return -1;
-  }
-  
-  handle = pcap_open_live(interface, 1514, 0, 0, err_buff);
+  handle = pcap_open_live(ifinfo.name, 1514, 0, 0, err_buff);
   
   if(!handle) {
     print( ERROR, "pcap_open_live: %s", err_buff);
@@ -303,12 +243,12 @@ int start_sniff(char *interface) {
   }
   
   if(pcap_datalink(handle) != DLT_EN10MB) {
-    print( ERROR, "Device %s doesn't provide Ethernet headers - not supported\n", interface);
+    print( ERROR, "Device %s doesn't provide Ethernet headers - not supported\n", ifinfo.name);
     pcap_close(handle);
     return -1;
   }
   
-  if(pcap_compile(handle, &filter, "( ( ( arp or rarp ) and (arp[6:2] & 1 == 0 ) ) or ( udp and port 137 ))", 1, (bpf_u_int32) if_info.ip_mask)) {
+  if(pcap_compile(handle, &filter, "( ( ( arp or rarp ) and (arp[6:2] & 1 == 0 ) ) or ( udp and port 137 ))", 1, (bpf_u_int32) ifinfo.ip_mask)) {
     print( ERROR, "pcap_compile: %s", pcap_geterr(handle));
     pcap_close(handle);
     return -1;
