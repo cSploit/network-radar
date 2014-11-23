@@ -3,5 +3,5 @@ before_script:
   - wget "https://github.com/cSploit/common/archive/master.zip" -O ../common.zip
   - (cd .. ; unzip -q common.zip ; mv common-master cSploitCommon )
 install:
-  - sudo pat-get install libpcap0.8
+  - sudo apt-get install libpcap0.8
 script: make
