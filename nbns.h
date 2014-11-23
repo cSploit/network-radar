@@ -402,6 +402,9 @@ struct nbns_node_name_tail {
   uint16_t reserved:9;
 } __attribute__((__packed__));
 
+#define NBNS_NBSTATREQ_LEN 50
+
+extern uint8_t nbns_nbstat_request[NBNS_NBSTATREQ_LEN];
 
 /* ===== functions =====*/
 

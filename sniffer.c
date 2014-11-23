@@ -21,19 +21,13 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <net/if.h>
 #include <sys/socket.h>
-#include <netpacket/packet.h>
-#include <net/ethernet.h>
-#include <netinet/in.h>
-#include <netinet/if_ether.h>
-#include <netinet/udp.h>
-#include <netinet/ip.h>
 #include <time.h>
 #include <stddef.h>
 
 #include "logger.h"
 
+#include "netdefs.h"
 #include "host.h"
 #include "event.h"
 #include "nbns.h"
@@ -53,7 +47,7 @@ void on_arp(struct ether_arp *arp) {
   struct event *e;
   
   // sanity check
-  if(arp->arp_hln != ETHER_ADDR_LEN || arp->arp_pln != 4) {
+  if(arp->arp_hln != ETH_ALEN || arp->arp_pln != 4) {
     return;
   }
   
@@ -139,10 +133,10 @@ void on_udp(const unsigned char *packet) {
   udp = NULL;
   nb = NULL;
   
-  if(!memcmp(eth->ether_dhost, if_info.eth_addr, ETHER_ADDR_LEN)) {
+  if(!memcmp(eth->ether_dhost, if_info.eth_addr, ETH_ALEN)) {
     // received UDP packet
     
-    udp = (struct udphdr *) (((uint8_t *)ip) + (ip->ihl * 4));
+    udp = (struct udphdr *) (((uint32_t *)ip) + ip->ihl);
     nb = (struct nbnshdr *) (((uint8_t *)udp) + sizeof(struct udphdr));
     
     host_mac = eth->ether_shost;
@@ -179,15 +173,15 @@ void on_udp(const unsigned char *packet) {
     }
     
     memset(h, 0, sizeof(struct host));
-    memcpy(&(h->mac), host_mac, ETHER_ADDR_LEN);
+    memcpy(&(h->mac), host_mac, ETH_ALEN);
     h->timeout = time(NULL) + HOST_TIMEOUT;
     
     set_host(host_ip, h);
     
     e->type = NEW_MAC;
-  } else if(memcmp(h->mac, host_mac, ETHER_ADDR_LEN)) {
+  } else if(memcmp(h->mac, host_mac, ETH_ALEN)) {
     
-    memcpy(h->mac, host_mac, ETHER_ADDR_LEN);
+    memcpy(h->mac, host_mac, ETH_ALEN);
     
     e->type = MAC_CHANGED;
   }
@@ -218,7 +212,7 @@ void *sniffer(void *arg) {
   while((packet = pcap_next(handle, &pkthdr))) {
     if(packet[12] == 0x08) {
       if( packet[13] == 0x06 || packet[13] == 0x35)
-        on_arp((struct ether_arp *) (packet + sizeof(struct ether_header)));
+        on_arp((struct ether_arp *) (packet + ETH_HLEN));
       else if( packet[13] == 0x00 )
         on_udp(packet);
     }
@@ -248,19 +242,22 @@ int start_sniff(char *interface) {
   status = (L2_NOT_FOUND | L3_NOT_FOUND);
   
   if(pcap_findalldevs(&devlist, err_buff)) {
-    print( ERROR, "pcap_findalldevs: %s\n", err_buff);
+    print( ERROR, "pcap_findalldevs: %s", err_buff);
     return -1;
   }
   
   for(dev=devlist; dev && strncmp(dev->name, interface, IFNAMSIZ); dev=dev->next);
   
   if(!dev) {
-    print( ERROR, "device '%s' not found\n", interface);
+    print( ERROR, "device '%s' not found", interface);
     pcap_freealldevs(devlist);
     return -1;
   }
   
   for(a=dev->addresses;a && status;a=a->next) {
+    
+    print( DEBUG, "sa_family=%02hX", a->addr->sa_family );
+    
     if(a->addr->sa_family == AF_INET) {
       i = (struct sockaddr_in *) a->addr;
       
@@ -275,9 +272,9 @@ int start_sniff(char *interface) {
     } else if(a->addr->sa_family == AF_PACKET) {
       l = (struct sockaddr_ll *) a->addr;
       
-      if(l->sll_halen != ETHER_ADDR_LEN) continue;
+      if(l->sll_halen != ETH_ALEN) continue;
       
-      memcpy(if_info.eth_addr, l->sll_addr, ETHER_ADDR_LEN);
+      memcpy(if_info.eth_addr, l->sll_addr, ETH_ALEN);
       status &= ~(L2_NOT_FOUND);
     }
   }
@@ -286,10 +283,10 @@ int start_sniff(char *interface) {
   
   if(status) {
     if(status & L2_NOT_FOUND) {
-      print( ERROR, "%s: cannot find link layer address\n", __func__);
+      print( ERROR, "cannot find link layer address");
     }
     if(status & L3_NOT_FOUND) {
-      print( ERROR, "%s: cannot find IPv4 address\n", __func__);
+      print( ERROR, "cannot find IPv4 address");
     }
     return -1;
   }
@@ -297,12 +294,12 @@ int start_sniff(char *interface) {
   handle = pcap_open_live(interface, 1514, 0, 0, err_buff);
   
   if(!handle) {
-    print( ERROR, "pcap_open_live: %s\n", err_buff);
+    print( ERROR, "pcap_open_live: %s", err_buff);
     return -1;
   }
   
   if(*err_buff) {
-    print( ERROR, "pcap_open_live: %s\n", err_buff);
+    print( ERROR, "pcap_open_live: %s", err_buff);
   }
   
   if(pcap_datalink(handle) != DLT_EN10MB) {
@@ -312,20 +309,20 @@ int start_sniff(char *interface) {
   }
   
   if(pcap_compile(handle, &filter, "( ( ( arp or rarp ) and (arp[6:2] & 1 == 0 ) ) or ( udp and port 137 ))", 1, (bpf_u_int32) if_info.ip_mask)) {
-    print( ERROR, "pcap_compile: %s\n", pcap_geterr(handle));
+    print( ERROR, "pcap_compile: %s", pcap_geterr(handle));
     pcap_close(handle);
     return -1;
   }
   
   if(pcap_setfilter(handle, &filter)) {
-    print( ERROR, "pcap_setfilter: %s\n", pcap_geterr(handle));
+    print( ERROR, "pcap_setfilter: %s", pcap_geterr(handle));
     pcap_close(handle);
     return -1;
   }
   
   if(init_hosts()) {
     pcap_close(handle);
-    print( ERROR, "init_hosts: %s\n", strerror(errno));
+    print( ERROR, "init_hosts: %s", strerror(errno));
     return -1;
   }
   
@@ -333,7 +330,7 @@ int start_sniff(char *interface) {
     sniffer_tid = 0;
     pcap_close(handle);
     free(hosts.array);
-    print( ERROR, "pthread_create: %s\n", strerror(errno));
+    print( ERROR, "pthread_create: %s", strerror(errno));
     return -1;
   }
   

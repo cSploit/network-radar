@@ -18,42 +18,18 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <arpa/inet.h>
-#include <net/ethernet.h>
-#include <netinet/in.h>
-#include <netinet/if_ether.h>
-#include <netpacket/packet.h>
-#include <net/if_arp.h>
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #include "logger.h"
 
+#include "netdefs.h"
 #include "sniffer.h"
 #include "host.h"
+#include "nbns.h"
 #include "prober.h"
 #include "event.h"
-
-#define NBREQ_LEN 50
-
-uint8_t netbios_request[NBREQ_LEN] = {
-    0x82, 0x28, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x20, 0x43, 0x4B, 0x41, 0x41, 0x41, 0x41, 0x41,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
-    0x41, 0x41, 0x41, 0x41, 0x41, 0x00, 0x00, 0x21, 0x00, 0x01
-};
-
-
-struct arp_packet {
-  struct ether_header eh;
-  struct arphdr ah;
-  uint8_t ar_sha[ETHER_ADDR_LEN];
-  uint8_t ar_spa[4];
-  uint8_t ar_tha[ETHER_ADDR_LEN];
-  uint8_t ar_tpa[4];
-} arp_request;
 
 void *prober(void *arg) {
   uint32_t max_index, i;
@@ -73,23 +49,23 @@ void *prober(void *arg) {
   
   // build the ethernet header
   
-  memset(arp_request.eh.ether_dhost, 0xFF, ETHER_ADDR_LEN);
-  memcpy(arp_request.eh.ether_shost, if_info.eth_addr, ETHER_ADDR_LEN);
+  memset(arp_request.eh.ether_dhost, 0xFF, ETH_ALEN);
+  memcpy(arp_request.eh.ether_shost, if_info.eth_addr, ETH_ALEN);
   arp_request.eh.ether_type = htons(ETH_P_ARP);
   
   // build arp header
   
   arp_request.ah.ar_hrd = htons(ARPHRD_ETHER);
   arp_request.ah.ar_pro = htons(ETH_P_IP);
-  arp_request.ah.ar_hln = ETHER_ADDR_LEN;
+  arp_request.ah.ar_hln = ETH_ALEN;
   arp_request.ah.ar_pln = 4;
   arp_request.ah.ar_op  = htons(ARPOP_REQUEST);
   
   // build arp message constants
   
-  memcpy(arp_request.ar_sha, if_info.eth_addr, ETHER_ADDR_LEN);
-  memcpy(arp_request.ar_spa, if_info.ip_addr, 4);
-  memset(arp_request.ar_tha, 0x00, ETHER_ADDR_LEN);
+  memcpy(arp_request.arp_sha, if_info.eth_addr, ETH_ALEN);
+  memcpy(arp_request.arp_spa, if_info.ip_addr, 4);
+  memset(arp_request.arp_tha, 0x00, ETH_ALEN);
   
   max_index = get_host_max_index();
   
@@ -106,7 +82,7 @@ void *prober(void *arg) {
     
     addr.sin_addr.s_addr = get_host_addr(i);
     
-    sendto(sockfd, netbios_request, NBREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
+    sendto(sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
   }
   
   pthread_mutex_lock(&(hosts.control.mutex));
@@ -124,7 +100,7 @@ void *prober(void *arg) {
       
       if(h && time(NULL) < timeout) {
         
-        memcpy(&(arp_request.ar_tpa), &(addr.sin_addr.s_addr), 4);
+        memcpy(&(arp_request.arp_tpa), &(addr.sin_addr.s_addr), 4);
         
         //NOTE: should we worried about race conditions here ?
         
@@ -152,7 +128,7 @@ void *prober(void *arg) {
           }
         }
         
-        if(sendto(sockfd, netbios_request, NBREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr)) == -1)
+        if(sendto(sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr)) == -1)
           print( ERROR, "sendto(%u): %s\n", i, strerror(errno));
       }
       

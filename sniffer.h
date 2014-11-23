@@ -19,12 +19,13 @@
 
 #include <pcap.h>
 #include <stdint.h>
-#include <net/ethernet.h>
+
+#include "netdefs.h"
 
 extern pcap_t *handle;
 
 extern struct if_info {
-  uint8_t  eth_addr[ETHER_ADDR_LEN];
+  uint8_t  eth_addr[ETH_ALEN];
   uint8_t  ip_addr[4];
   uint32_t ip_mask;
 } if_info;
