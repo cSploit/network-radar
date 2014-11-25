@@ -32,11 +32,15 @@
 #include "ifinfo.h"
 #include "main.h"
 
-void signal_handler(int signal) {
+void stop(int signal) {
   stop_sniff();
   stop_notifier();
   stop_prober();
   stop_resolver();
+}
+
+void update(int signal) {
+  full_scan();
 }
 
 /**
@@ -46,15 +50,24 @@ void signal_handler(int signal) {
 int register_signal_handlers() {
   struct sigaction action;
   
-  action.sa_handler = signal_handler;
+  action.sa_handler = stop;
   sigemptyset(&(action.sa_mask));
   action.sa_flags = 0;
   
   if(sigaction(SIGINT, &action, NULL)) {
     print( ERROR, "sigaction(SIGINT): %s", strerror(errno) );
     return -1;
-  } else if(sigaction(SIGTERM, &action, NULL)) {
+  }
+  
+  if(sigaction(SIGTERM, &action, NULL)) {
     print( ERROR, "sigaction(SIGTERM): %s", strerror(errno) );
+    return -1;
+  }
+  
+  action.sa_handler = update;
+  
+  if(sigaction(SIGHUP, &action, NULL)) {
+    print( ERROR, "sigaction(SIGHUP): %s", strerror(errno) );
     return -1;
   }
   
@@ -88,18 +101,23 @@ int main(int argc, char **argv) {
   if(control_init(&(hosts.control)))
     return EXIT_FAILURE;
   
-  if(start_notifier())
-    return EXIT_FAILURE;
+  if(init_prober()) goto error;
   
-  if(start_resolver())
-    return EXIT_FAILURE;
+  if(start_notifier()) goto error;
   
-  if(start_sniff()) {
-    stop_resolver();
-    return EXIT_FAILURE;
-  }
+  if(start_resolver()) goto error;
+  
+  if(start_sniff()) goto error;
   
   prober(NULL);
   
   return EXIT_SUCCESS;
+  
+  error:
+  stop_prober();
+  stop_sniff();
+  stop_notifier();
+  stop_resolver();
+  
+  return EXIT_FAILURE;
 }

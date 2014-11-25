@@ -25,9 +25,13 @@
 
 #include "control.h"
 
+#define HOST_LOOKUP_DNS 1
+#define HOST_LOOKUP_NBNS 2
+
 struct host {
   uint8_t mac[6];
   char *name;
+  char lookup_status;
   time_t timeout;
 };
 

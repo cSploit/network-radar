@@ -63,7 +63,11 @@ struct ether_header
 
 #define _NET_IF_ARP_H 1
 
+/* ARP protocol opcodes. */
 #define ARPOP_REQUEST   1               /* ARP request.  */
+#define ARPOP_REPLY     2               /* ARP reply.  */
+#define ARPOP_RREQUEST  3               /* RARP request.  */
+#define ARPOP_RREPLY    4               /* RARP reply.  */
 
 struct arphdr
 {
@@ -107,7 +111,7 @@ struct arp_packet {
   u_int8_t arp_spa[4];
   u_int8_t arp_tha[ETH_ALEN];
   u_int8_t arp_tpa[4];
-} arp_request;
+};
 
 #ifdef HAVE_NETINET_IP_H
 #include <netinet/ip.h>

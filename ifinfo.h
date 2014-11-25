@@ -25,7 +25,7 @@
 extern struct if_info {
   char     name[IFNAMSIZ];
   uint8_t  eth_addr[ETH_ALEN];
-  uint8_t  ip_addr[4];
+  uint32_t ip_addr;
   uint32_t ip_mask;
 } ifinfo;
 

@@ -53,7 +53,7 @@ int init_hosts() {
   }
   
   hosts.mask = ~ifinfo.ip_mask;
-  hosts.base_ip = *((uint32_t *)ifinfo.ip_addr) & ifinfo.ip_mask;
+  hosts.base_ip = ifinfo.ip_addr & ifinfo.ip_mask;
   
   return 0;
 }

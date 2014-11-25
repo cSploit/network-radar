@@ -142,12 +142,12 @@ int get_ifinfo(char *ifname) {
     if(a->addr->sa_family == AF_INET) {
       i = (struct sockaddr_in *) a->addr;
       
-      memcpy(ifinfo.ip_addr, &(i->sin_addr.s_addr), 4);
+      ifinfo.ip_addr = i->sin_addr.s_addr;
       
       i = (struct sockaddr_in *) a->netmask;
       
       if(i) {
-        memcpy(&(ifinfo.ip_mask), &(i->sin_addr.s_addr), 4);
+        ifinfo.ip_mask = i->sin_addr.s_addr;
         status &= ~(L3_NOT_FOUND);
       }
     } else if(a->addr->sa_family == AF_PACKET) {

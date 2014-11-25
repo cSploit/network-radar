@@ -17,7 +17,11 @@
 #ifndef PROBER_H
 #define PROBER_H
 
+int init_prober();
+
 void *prober(void *);
+void begin_nbns_lookup(uint32_t);
+void full_scan(void);
 
 void stop_prober(void);
 

@@ -33,22 +33,77 @@
 #include "nbns.h"
 #include "sniffer.h"
 #include "resolver.h"
+#include "prober.h"
 #include "ifinfo.h"
 
 pcap_t *handle;
 
 pthread_t sniffer_tid = 0;
 
-void on_arp(struct ether_arp *arp) {
-  uint8_t *mac;
-  uint32_t *ip;
+void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) {
   struct host *h;
   struct event *e;
+  int old_errno;
+  uint8_t e_type;
+  char lstatus;
   
-  // sanity check
-  if(arp->arp_hln != ETH_ALEN || arp->arp_pln != 4) {
-    return;
+  e_type = NONE;
+  
+  pthread_mutex_lock(&(hosts.control.mutex));
+  
+  h = get_host(ip);
+  
+  if(h) {
+    if(memcmp(mac, h->mac, ETH_ALEN)) {
+      memcpy(h->mac, mac, ETH_ALEN);
+      
+      e_type = MAC_CHANGED;
+    }
+    
+    if(name || e_type == MAC_CHANGED) {
+      if(h->name)
+        free(h->name);
+      h->name = name;
+    }
+    
+  } else {
+    h = malloc(sizeof(struct host));
+    
+    if(!h) {
+      old_errno = errno;
+      pthread_mutex_unlock(&(hosts.control.mutex));
+      print(ERROR, "malloc: %s", strerror(old_errno));
+      return;
+    }
+    
+    memset(h, 0, sizeof(struct host));
+    memcpy(h->mac, mac, ETH_ALEN);
+    h->name = name;
+    
+    set_host(ip, h);
+    
+    e_type = NEW_MAC;
   }
+  
+  h->timeout = time(NULL) + HOST_TIMEOUT;
+  
+  lstatus = h->lookup_status;
+  h->lookup_status |= (HOST_LOOKUP_DNS|HOST_LOOKUP_NBNS);
+  
+  pthread_mutex_unlock(&(hosts.control.mutex));
+  
+  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_DNS)) {
+    begin_dns_lookup(ip);
+  }
+  
+  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_NBNS)) {
+    begin_nbns_lookup(ip);
+  }
+  
+  if(name)
+    e_type = NEW_NAME;
+  else if(e_type == NONE)
+    return;
   
   e = malloc(sizeof(struct event));
   
@@ -57,80 +112,64 @@ void on_arp(struct ether_arp *arp) {
     return;
   }
   
-  memset(e, 0, sizeof(struct event));
+  e->ip = ip;
+  e->type = e_type;
   
-  // due to our pcap filter this is an ARP reply
+  add_event(e);
+}
+
+void on_arp(struct ether_arp *arp) {
+  uint8_t *mac;
+  uint32_t ip;
   
-  if(memcmp(arp->arp_spa, ifinfo.ip_addr, 4)) {
+  static const uint8_t arp_hwaddr_any[ETH_ALEN] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+  };
+  
+  // sanity check
+  if(arp->arp_hln != ETH_ALEN || arp->arp_pln != 4) {
+    return;
+  }
+  
+  // skip sent arp packets
+  if(!memcmp(arp->arp_sha, ifinfo.eth_addr, ETH_ALEN))
+    return;
+  
+  mac = (uint8_t *) arp->arp_tha;
+  ip = *((uint32_t *) arp->arp_tpa);
+  
+  process:
+  
+  if(ip != INADDR_ANY && ip != ifinfo.ip_addr) {
+    if(!memcmp(mac, ifinfo.eth_addr, ETH_ALEN)) {
+      // skip
+    } else if(memcmp(mac, arp_hwaddr_any, ETH_ALEN)) {
+      on_host_found(mac, ip, NULL, 0);
+    } else if (!get_host(ip)) {
+      // we dont have this host and someone want to talk to him
+      begin_nbns_lookup(ip);
+    }
+  }
+  
+  if(mac == (uint8_t *) arp->arp_tha) {
     mac = (uint8_t *) arp->arp_sha;
-    ip = (uint32_t *) arp->arp_spa;
-  } else {
-    mac = (uint8_t *) arp->arp_tha;
-    ip = (uint32_t *) arp->arp_tpa;
-  }
-  
-  memcpy(&(e->ip), ip, 4);
-  
-  pthread_mutex_lock(&(hosts.control.mutex));
-  
-  h = get_host(*ip);
-  
-  if(h) {
-    if(memcmp(h->mac, mac, 6)) {
-      
-      e->type = MAC_CHANGED;
-      
-      memcpy(&(h->mac), mac, 6);
-      
-      if(h->name)
-        free(h->name);
-      
-      h->name = NULL;
-      
-      begin_dns_lookup(*ip);
-      
-    }
-    
-    h->timeout = time(NULL) + HOST_TIMEOUT;
-  } else {
-    h = malloc(sizeof(struct host));
-    if(!h) {
-      pthread_mutex_unlock(&(hosts.control.mutex));
-      print( ERROR, "malloc: %s\n", strerror(errno));
-      free(e);
-      return;
-    }
-    e->type = NEW_MAC;
-    
-    memset(h, 0, sizeof(struct host));
-    memcpy(&(h->mac), mac, 6);
-    h->timeout = time(NULL) + HOST_TIMEOUT;
-    set_host(*ip, h);
-    begin_dns_lookup(*ip);
-  }
-  pthread_mutex_unlock(&(hosts.control.mutex));
-  
-  if(e->type != NONE) {
-    add_event(e);
-  } else {
-    free(e);
+    ip = *((uint32_t *) arp->arp_spa);
+    goto process;
   }
 }
 
-void on_udp(const unsigned char *packet) {
-  struct ether_header *eth;
+void on_udp(struct ether_header *eth) {
   struct iphdr *ip;
   struct udphdr *udp;
   struct nbnshdr *nb;
-  struct host *h;
-  struct event *e;
+  char *nbname;
   uint32_t host_ip;
   uint8_t *host_mac;
   
-  eth = (struct ether_header *) packet;
-  ip = (struct iphdr *) (packet + sizeof(struct ether_header));
+  ip = (struct iphdr *) (eth+1);
   udp = NULL;
   nb = NULL;
+  nbname = NULL;
   
   if(!memcmp(eth->ether_dhost, ifinfo.eth_addr, ETH_ALEN)) {
     // received UDP packet
@@ -148,72 +187,32 @@ void on_udp(const unsigned char *packet) {
     host_ip = ip->daddr;
   }
   
-  e = malloc(sizeof(struct event));
-  
-  if(!e) {
-    print( ERROR, "malloc: %s\n", strerror(errno));
-    return;
-  }
-  
-  memset(e, 0, sizeof(struct event));
-  e->ip = host_ip;
-  
-  pthread_mutex_lock(&(hosts.control.mutex));
-
-  h = get_host(host_ip);
-  
-  if(!h) {
-    h = malloc(sizeof(struct host));
-    
-    if(!h) {
-      print( ERROR, "malloc: %s\n", strerror(errno));
-      pthread_mutex_unlock(&(hosts.control.mutex));
-      return;
-    }
-    
-    memset(h, 0, sizeof(struct host));
-    memcpy(&(h->mac), host_mac, ETH_ALEN);
-    h->timeout = time(NULL) + HOST_TIMEOUT;
-    
-    set_host(host_ip, h);
-    
-    e->type = NEW_MAC;
-  } else if(memcmp(h->mac, host_mac, ETH_ALEN)) {
-    
-    memcpy(h->mac, host_mac, ETH_ALEN);
-    
-    e->type = MAC_CHANGED;
-  }
-  
   if(nb) {
-    h->name = nbns_get_status_name(nb);
-    if(h->name)
-      e->type = NEW_NAME;
+    nbname = nbns_get_status_name(nb);
   }
   
-  pthread_mutex_unlock(&(hosts.control.mutex));
-  
-  if(!nb) {
-    begin_dns_lookup(host_ip);
-  }
-  
-  if(e->type != NONE) {
-    add_event(e);
-  } else {
-    free(e);
-  }
+  on_host_found(host_mac, host_ip, nbname, HOST_LOOKUP_NBNS);
 }
 
 void *sniffer(void *arg) {
-  const unsigned char *packet;
+  struct ether_header *eth;
+  struct iphdr *ip;
   struct pcap_pkthdr pkthdr;
+  unsigned short int eth_type_arp;
+  uint16_t eth_type_ip;
   
-  while((packet = pcap_next(handle, &pkthdr))) {
-    if(packet[12] == 0x08) {
-      if( packet[13] == 0x06 || packet[13] == 0x35)
-        on_arp((struct ether_arp *) (packet + ETH_HLEN));
-      else if( packet[13] == 0x00 )
-        on_udp(packet);
+  eth_type_arp = htons(ETH_P_ARP);
+  eth_type_ip  = htons(ETH_P_IP);
+  
+  while((eth = (struct ether_header *) pcap_next(handle, &pkthdr))) {
+    if(eth->ether_type == eth_type_arp) {
+      on_arp((struct ether_arp *) (eth + 1));
+    } else if(eth->ether_type == eth_type_ip) {
+      ip = (struct iphdr *) (eth+1);
+      
+      if(ip->protocol == IPPROTO_UDP) {
+        on_udp(eth);
+      }
     }
   }
   
@@ -248,7 +247,7 @@ int start_sniff() {
     return -1;
   }
   
-  if(pcap_compile(handle, &filter, "( ( ( arp or rarp ) and (arp[6:2] & 1 == 0 ) ) or ( udp and port 137 ))", 1, (bpf_u_int32) ifinfo.ip_mask)) {
+  if(pcap_compile(handle, &filter, "( ( arp or rarp ) or ( udp and port 137 ))", 1, (bpf_u_int32) ifinfo.ip_mask)) {
     print( ERROR, "pcap_compile: %s", pcap_geterr(handle));
     pcap_close(handle);
     return -1;

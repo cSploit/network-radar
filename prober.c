@@ -32,25 +32,19 @@
 #include "prober.h"
 #include "event.h"
 
-void *prober(void *arg) {
-  uint32_t max_index, i;
-  struct sockaddr_in addr;
-  int sockfd;
-  useconds_t delay;
-  struct host *h;
-  time_t timeout;
-  struct event *e;
+int nbns_sockfd = -1;
+struct arp_packet arp_request;
+
+int init_prober() {
+  nbns_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   
-  sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-  
-  if(sockfd == -1) {
+  if(nbns_sockfd == -1) {
     print( ERROR, "socket: %s\n", strerror(errno));
-    return NULL;
+    return -1;
   }
   
   // build the ethernet header
   
-  memset(arp_request.eh.ether_dhost, 0xFF, ETH_ALEN);
   memcpy(arp_request.eh.ether_shost, ifinfo.eth_addr, ETH_ALEN);
   arp_request.eh.ether_type = htons(ETH_P_ARP);
   
@@ -65,26 +59,64 @@ void *prober(void *arg) {
   // build arp message constants
   
   memcpy(arp_request.arp_sha, ifinfo.eth_addr, ETH_ALEN);
-  memcpy(arp_request.arp_spa, ifinfo.ip_addr, 4);
+  memcpy(arp_request.arp_spa, &(ifinfo.ip_addr), 4);
   memset(arp_request.arp_tha, 0x00, ETH_ALEN);
   
-  max_index = get_host_max_index();
-  
-  delay = (FULL_SCAN_MS / max_index) * 1000;
+  return 0;
+}
+
+void begin_nbns_lookup(uint32_t ip) {
+  struct sockaddr_in addr;
   
   memset(&addr, 0, sizeof(addr));
   
   addr.sin_family = AF_INET;
   addr.sin_port = htons(137);
   
-  // quick probe on startup
+  addr.sin_addr.s_addr = ip;
+    
+  if(sendto(nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+    print( ERROR, "sendto(%u.%u.%u.%u): %s",
+           ((uint8_t *) &ip)[0], ((uint8_t *) &ip)[1], ((uint8_t *) &ip)[2], ((uint8_t *) &ip)[3],
+           strerror(errno));
+  }
+}
+
+/**
+ * @brief perform a full and quick scan sending a NBSTAT request to all hosts
+ */
+void full_scan() {
+  uint32_t i, max;
+  struct sockaddr_in addr;
   
-  for(i=1;i<max_index;i++) {
+  max = get_host_max_index();
+  
+  memset(&addr, 0, sizeof(addr));
+  
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(137);
+  
+  for(i=1;i<max;i++) {
     
     addr.sin_addr.s_addr = get_host_addr(i);
     
-    sendto(sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
+    sendto(nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
   }
+}
+
+void *prober(void *arg) {
+  uint32_t max_index, i, ip;
+  useconds_t delay;
+  struct host *h;
+  time_t timeout;
+  struct event *e;
+  
+  max_index = get_host_max_index();
+  
+  delay = (FULL_SCAN_MS / max_index) * 1000;
+  
+  // quick and full scan on startup
+  full_scan();
   
   pthread_mutex_lock(&(hosts.control.mutex));
   
@@ -93,24 +125,30 @@ void *prober(void *arg) {
     for(i=1;i<max_index && hosts.control.active;i++) {
       
       h = hosts.array[i];
-      timeout = ( h ? h->timeout : 0);
+      
+      if(h) {
+        timeout = h->timeout;
+        
+        memcpy(arp_request.eh.ether_dhost, h->mac, ETH_ALEN);
+      } else {
+        timeout = 0;
+      }
       
       pthread_mutex_unlock(&(hosts.control.mutex));
       
-      addr.sin_addr.s_addr = get_host_addr(i);
-      
-      if(h && time(NULL) < timeout) {
+      if(h) {
+        ip = get_host_addr(i);
         
-        memcpy(&(arp_request.arp_tpa), &(addr.sin_addr.s_addr), 4);
+        if(time(NULL) < timeout) {
         
-        //NOTE: should we worried about race conditions here ?
-        
-        if(pcap_inject(handle, &arp_request, sizeof(struct arp_packet)) == -1) {
-          print( ERROR, "pcap_inject: %s\n", pcap_geterr(handle));
-        }
-      } else {
-        
-        if(h) {
+          memcpy(&(arp_request.arp_tpa), &ip, 4);
+          
+          //NOTE: should we worried about race conditions here ?
+          
+          if(pcap_inject(handle, &arp_request, sizeof(struct arp_packet)) == -1) {
+            print( WARNING, "pcap_inject: %s", pcap_geterr(handle));
+          }
+        } else {
           pthread_mutex_lock(&(hosts.control.mutex));
           hosts.array[i] = NULL;
           pthread_mutex_unlock(&(hosts.control.mutex));
@@ -121,16 +159,13 @@ void *prober(void *arg) {
           
           if(e) {
             e->type = MAC_LOST;
-            e->ip = addr.sin_addr.s_addr;
+            e->ip = ip;
             
             add_event(e);
           } else {
             print( ERROR, "malloc: %s\n", strerror(errno));
           }
         }
-        
-        if(sendto(sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr)) == -1)
-          print( ERROR, "sendto(%u): %s\n", i, strerror(errno));
       }
       
       usleep(delay);
@@ -142,11 +177,12 @@ void *prober(void *arg) {
   
   pthread_mutex_unlock(&(hosts.control.mutex));
   
-  close(sockfd);
+  close(nbns_sockfd);
   
   return NULL;
 }
 
 void stop_prober() {
   control_deactivate(&(hosts.control));
+  shutdown( nbns_sockfd, SHUT_WR);
 }
