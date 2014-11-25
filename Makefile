@@ -26,7 +26,7 @@ OBJS := $(SRCS:.c=.o)
 network-monitor: $(OBJS) ../cSploitCommon/libcSploitCommon.so
 	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 	
-../libcSploitCommon.so:
+../cSploitCommon/libcSploitCommon.so:
 	$(MAKE) -C ../cSploitCommon
 	
 .c.o:
