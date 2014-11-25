@@ -113,7 +113,7 @@ void *prober(void *arg) {
   
   max_index = get_host_max_index();
   
-  delay = (FULL_SCAN_MS / max_index) * 1000;
+  delay = (FULL_SCAN_MS * 1000 / max_index);
   
   // quick and full scan on startup
   full_scan();
