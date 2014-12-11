@@ -34,11 +34,7 @@
 #include "analyzer.h"
 
 void stop(int signal) {
-  stop_analyzer();
-  stop_sniff();
-  stop_notifier();
-  stop_prober();
-  stop_resolver();
+  hosts.control.active = 0;
 }
 
 void update(int signal) {
