@@ -24,15 +24,21 @@
 /* required headers */
 #include <sys/types.h>
 #include <sys/socket.h>
+
+#ifndef PF_PACKET
+# error PF_PACKET support is required, please upgrade your kernel
+#endif
+
 #include <netinet/in.h>
 #include <net/if.h>
-#include <netpacket/packet.h>
+#include <linux/if_packet.h>
 
 #ifdef HAVE_LINUX_IF_ETHER_H
 #include <linux/if_ether.h>
 #else
 #define _LINUX_IF_ETHER_H 1
 
+#define ETH_P_ALL 0x0003          /* Every packet (be careful!!!) */
 #define ETH_P_IP  0x0800          /* Internet Protocol packet     */
 #define ETH_P_ARP 0x0806          /* Address Resolution packet    */
 

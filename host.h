@@ -55,5 +55,6 @@ extern struct hosts_data {
 #define get_host_max_index() (hosts.maxindex)
 
 int init_hosts();
+void on_host_found(uint8_t *, uint32_t , char *, char);
 
 #endif

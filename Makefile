@@ -19,6 +19,7 @@ LD := gcc
 
 LIBS := -L ../cSploitCommon -lcSploitCommon -lpthread -lm -lpcap -lcares
 CFLAGS := -g -O0 -Werror -Wall -I. -I../cSploitCommon -fPIC 
+CFLAGS += -DPROFILE
 #CFLAGS += -DNDEBUG
 SRCS:=$(wildcard *.c )
 OBJS := $(SRCS:.c=.o)

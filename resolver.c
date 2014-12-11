@@ -31,11 +31,9 @@
 #include "control.h"
 #include "event.h"
 #include "host.h"
+#include "resolver.h"
 
-ares_channel channel;
-pthread_t resolver_tid = 0;
-
-data_control resolver_control;
+struct resolver_data resolver_info;
 
 void on_query_end(void *arg, int status, int timeouts, struct hostent *ent) {
   uint32_t ip;
@@ -77,9 +75,13 @@ void on_query_end(void *arg, int status, int timeouts, struct hostent *ent) {
 
 void begin_dns_lookup(uint32_t ip) {
   
-  ares_gethostbyaddr(channel, &ip, 4, AF_INET, on_query_end, ((void *)0) + ip);
+  pthread_mutex_lock(&(resolver_info.control.mutex));
   
-  pthread_cond_broadcast(&(resolver_control.cond));
+  ares_gethostbyaddr(resolver_info.channel, &ip, 4, AF_INET, on_query_end, ((void *)0) + ip);
+  
+  pthread_mutex_unlock(&(resolver_info.control.mutex));
+  
+  pthread_cond_broadcast(&(resolver_info.control.cond));
 }
 
 void *resolver(void *arg) {
@@ -87,31 +89,31 @@ void *resolver(void *arg) {
   fd_set readers, writers;
   struct timeval tv, *tvp;
   
-  pthread_mutex_lock(&(resolver_control.mutex));
-  while (resolver_control.active) {
-    pthread_mutex_unlock(&(resolver_control.mutex));
+  pthread_mutex_lock(&(resolver_info.control.mutex));
+  while (resolver_info.control.active) {
+    pthread_mutex_unlock(&(resolver_info.control.mutex));
     
     FD_ZERO(&readers);
     FD_ZERO(&writers);
     
-    nfds = ares_fds(channel, &readers, &writers);
+    nfds = ares_fds(resolver_info.channel, &readers, &writers);
     
     if(!nfds) {
       // c-ares docs say that we should break and exit here,
       // but have 0 queries is an accaptable state, we have
       // just to wait for new ones.
-      pthread_cond_wait(&(resolver_control.cond), &(resolver_control.mutex));
+      pthread_cond_wait(&(resolver_info.control.cond), &(resolver_info.control.mutex));
       continue;
     }
     
-    tvp = ares_timeout(channel, NULL, &tv);
+    tvp = ares_timeout(resolver_info.channel, NULL, &tv);
     
     select(nfds, &readers, &writers, NULL, tvp);
-    ares_process(channel, &readers, &writers);
+    ares_process(resolver_info.channel, &readers, &writers);
     
-    pthread_mutex_lock(&(resolver_control.mutex));
+    pthread_mutex_lock(&(resolver_info.control.mutex));
   }
-  pthread_mutex_unlock(&(resolver_control.mutex));
+  pthread_mutex_unlock(&(resolver_info.control.mutex));
   
   ares_library_cleanup();
   
@@ -128,7 +130,7 @@ int start_resolver() {
     return -1;
   }
   
-  ret = ares_init(&channel);
+  ret = ares_init(&(resolver_info.channel));
   
   if(ret) {
     print( ERROR, "ares_init: %s\n", ares_strerror(ret));
@@ -136,17 +138,10 @@ int start_resolver() {
     return -1;
   }
   
-  if(control_init(&resolver_control)) {
-    ares_destroy(channel);
-    ares_library_cleanup();
-    return -1;
-  }
-  
-  if(pthread_create(&resolver_tid, NULL, resolver, NULL)) {
+  if(pthread_create(&(resolver_info.tid), NULL, resolver, NULL)) {
     print( ERROR, "pthread_create: %s\n", strerror(errno));
-    resolver_tid = 0;
-    control_destroy(&resolver_control);
-    ares_destroy(channel);
+    resolver_info.tid = 0;
+    ares_destroy(resolver_info.channel);
     ares_library_cleanup();
     return -1;
   }
@@ -157,13 +152,16 @@ int start_resolver() {
 void stop_resolver() {
   pthread_t tid;
   
-  if(resolver_tid) {
-    tid = resolver_tid;
-    resolver_tid = 0;
-    
-    control_deactivate(&resolver_control);
-    ares_destroy(channel);
-    pthread_join(tid, NULL);
-    control_destroy(&resolver_control);
-  }
+  pthread_mutex_lock(&(resolver_info.control.mutex));
+  tid = resolver_info.tid;
+  resolver_info.tid = 0;
+  resolver_info.control.active = 0;
+  pthread_mutex_unlock(&(resolver_info.control.mutex));
+  
+  pthread_cond_broadcast(&(resolver_info.control.cond));
+  
+  if(!tid) return;
+  
+  ares_destroy(resolver_info.channel);
+  pthread_join(tid, NULL);
 }

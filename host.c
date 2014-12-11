@@ -25,6 +25,9 @@
 
 #include "ifinfo.h"
 #include "host.h"
+#include "event.h"
+#include "prober.h"
+#include "resolver.h"
 
 struct hosts_data hosts;
 
@@ -56,4 +59,82 @@ int init_hosts() {
   hosts.base_ip = ifinfo.ip_addr & ifinfo.ip_mask;
   
   return 0;
+}
+
+void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) {
+  struct host *h;
+  struct event *e;
+  int old_errno;
+  uint8_t e_type;
+  char lstatus;
+  
+  e_type = NONE;
+  
+  pthread_mutex_lock(&(hosts.control.mutex));
+  
+  h = get_host(ip);
+  
+  if(h) {
+    if(memcmp(mac, h->mac, ETH_ALEN)) {
+      memcpy(h->mac, mac, ETH_ALEN);
+      
+      e_type = MAC_CHANGED;
+    }
+    
+    if(name || e_type == MAC_CHANGED) {
+      if(h->name)
+        free(h->name);
+      h->name = name;
+    }
+    
+  } else {
+    h = malloc(sizeof(struct host));
+    
+    if(!h) {
+      old_errno = errno;
+      pthread_mutex_unlock(&(hosts.control.mutex));
+      print(ERROR, "malloc: %s", strerror(old_errno));
+      return;
+    }
+    
+    memset(h, 0, sizeof(struct host));
+    memcpy(h->mac, mac, ETH_ALEN);
+    h->name = name;
+    
+    set_host(ip, h);
+    
+    e_type = NEW_MAC;
+  }
+  
+  h->timeout = time(NULL) + HOST_TIMEOUT;
+  
+  lstatus = h->lookup_status;
+  h->lookup_status |= (HOST_LOOKUP_DNS|HOST_LOOKUP_NBNS);
+  
+  pthread_mutex_unlock(&(hosts.control.mutex));
+  
+  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_DNS)) {
+    begin_dns_lookup(ip);
+  }
+  
+  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_NBNS)) {
+    begin_nbns_lookup(ip);
+  }
+  
+  if(name)
+    e_type = NEW_NAME;
+  else if(e_type == NONE)
+    return;
+  
+  e = malloc(sizeof(struct event));
+  
+  if(!e) {
+    print( ERROR, "malloc: %s", strerror(errno));
+    return;
+  }
+  
+  e->ip = ip;
+  e->type = e_type;
+  
+  add_event(e);
 }

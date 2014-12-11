@@ -32,35 +32,47 @@
 #include "prober.h"
 #include "event.h"
 
-int nbns_sockfd = -1;
-struct arp_packet arp_request;
+struct prober_data prober_info;
 
 int init_prober() {
-  nbns_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+  prober_info.nbns_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   
-  if(nbns_sockfd == -1) {
-    print( ERROR, "socket: %s\n", strerror(errno));
+  if(prober_info.nbns_sockfd == -1) {
+    print( ERROR, "socket: %s", strerror(errno));
     return -1;
   }
   
+#ifndef HAVE_LIBPCAP
+  
+  prober_info.arp_sockfd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+  
+  if(prober_info.arp_sockfd == -1) {
+    print( ERROR, "socket: %s", strerror(errno));
+    close(prober_info.nbns_sockfd);
+    close(prober_info.arp_sockfd);
+    return -1;
+  }
+  
+#endif
+  
   // build the ethernet header
   
-  memcpy(arp_request.eh.ether_shost, ifinfo.eth_addr, ETH_ALEN);
-  arp_request.eh.ether_type = htons(ETH_P_ARP);
+  memcpy(prober_info.arp_request.eh.ether_shost, ifinfo.eth_addr, ETH_ALEN);
+  prober_info.arp_request.eh.ether_type = htons(ETH_P_ARP);
   
   // build arp header
   
-  arp_request.ah.ar_hrd = htons(ARPHRD_ETHER);
-  arp_request.ah.ar_pro = htons(ETH_P_IP);
-  arp_request.ah.ar_hln = ETH_ALEN;
-  arp_request.ah.ar_pln = 4;
-  arp_request.ah.ar_op  = htons(ARPOP_REQUEST);
+  prober_info.arp_request.ah.ar_hrd = htons(ARPHRD_ETHER);
+  prober_info.arp_request.ah.ar_pro = htons(ETH_P_IP);
+  prober_info.arp_request.ah.ar_hln = ETH_ALEN;
+  prober_info.arp_request.ah.ar_pln = 4;
+  prober_info.arp_request.ah.ar_op  = htons(ARPOP_REQUEST);
   
   // build arp message constants
   
-  memcpy(arp_request.arp_sha, ifinfo.eth_addr, ETH_ALEN);
-  memcpy(arp_request.arp_spa, &(ifinfo.ip_addr), 4);
-  memset(arp_request.arp_tha, 0x00, ETH_ALEN);
+  memcpy(prober_info.arp_request.arp_sha, ifinfo.eth_addr, ETH_ALEN);
+  memcpy(prober_info.arp_request.arp_spa, &(ifinfo.ip_addr), 4);
+  memset(prober_info.arp_request.arp_tha, 0x00, ETH_ALEN);
   
   return 0;
 }
@@ -75,7 +87,7 @@ void begin_nbns_lookup(uint32_t ip) {
   
   addr.sin_addr.s_addr = ip;
     
-  if(sendto(nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+  if(sendto(prober_info.nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
     print( ERROR, "sendto(%u.%u.%u.%u): %s",
            ((uint8_t *) &ip)[0], ((uint8_t *) &ip)[1], ((uint8_t *) &ip)[2], ((uint8_t *) &ip)[3],
            strerror(errno));
@@ -100,7 +112,7 @@ void full_scan() {
     
     addr.sin_addr.s_addr = get_host_addr(i);
     
-    sendto(nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
+    sendto(prober_info.nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
   }
 }
 
@@ -129,7 +141,7 @@ void *prober(void *arg) {
       if(h) {
         timeout = h->timeout;
         
-        memcpy(arp_request.eh.ether_dhost, h->mac, ETH_ALEN);
+        memcpy(prober_info.arp_request.eh.ether_dhost, h->mac, ETH_ALEN);
       } else {
         timeout = 0;
       }
@@ -141,13 +153,15 @@ void *prober(void *arg) {
         
         if(time(NULL) < timeout) {
         
-          memcpy(&(arp_request.arp_tpa), &ip, 4);
+          memcpy(&(prober_info.arp_request.arp_tpa), &ip, 4);
           
-          //NOTE: should we worried about race conditions here ?
-          
-          if(pcap_inject(handle, &arp_request, sizeof(struct arp_packet)) == -1) {
+          #ifdef HAVE_LIBPCAP
+          if(pcap_inject(prober_info.handle, &(prober_info.arp_request), sizeof(struct arp_packet)) == -1) {
             print( WARNING, "pcap_inject: %s", pcap_geterr(handle));
           }
+          #else
+          // TODO: send arp packets ( arpd.c )
+          #endif
         } else {
           pthread_mutex_lock(&(hosts.control.mutex));
           hosts.array[i] = NULL;
@@ -177,12 +191,12 @@ void *prober(void *arg) {
   
   pthread_mutex_unlock(&(hosts.control.mutex));
   
-  close(nbns_sockfd);
+  close(prober_info.nbns_sockfd);
   
   return NULL;
 }
 
 void stop_prober() {
   control_deactivate(&(hosts.control));
-  shutdown( nbns_sockfd, SHUT_WR);
+  shutdown( prober_info.nbns_sockfd, SHUT_WR);
 }

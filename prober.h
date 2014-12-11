@@ -17,6 +17,13 @@
 #ifndef PROBER_H
 #define PROBER_H
 
+#ifdef HAVE_LIBPCAP
+#include <pcap.h>
+#endif
+
+#include "netdefs.h"
+#include "control.h"
+
 int init_prober();
 
 void *prober(void *);
@@ -27,5 +34,17 @@ void stop_prober(void);
 
 /** time to scan the entire network ( in ms ) */
 #define FULL_SCAN_MS 10000
+
+extern struct prober_data {
+  data_control control;
+  pthread_t tid;
+  int nbns_sockfd;
+#ifdef HAVE_LIBPCAP
+  pcap_t handle;
+#else
+  int arp_sockfd;
+#endif
+  struct arp_packet arp_request;
+} prober_info;
 
 #endif

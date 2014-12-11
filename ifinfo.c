@@ -32,81 +32,6 @@
 
 struct if_info ifinfo;
 
-#define L3_NOT_FOUND 1
-#define L2_NOT_FOUND 2
-
-int sysfs_get_L2_ifinfo(char *ifname) {
-  char *path;
-  FILE *fp;
-  int ret;
-  
-  path = NULL;
-  fp = NULL;
-  ret = -1;
-  
-  if(asprintf(&path, "/sys/class/net/%s/address", ifname) == -1) {
-    print( ERROR, "asprintf: %s", strerror(errno));
-    goto exit;
-  }
-  
-  fp = fopen(path, "r");
-  
-  if(!fp) {
-    print(ERROR, "fopen: %s", strerror(errno));
-    goto exit;
-  }
-  
-  ret = fscanf(fp, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
-         &(ifinfo.eth_addr[0]), &(ifinfo.eth_addr[1]), &(ifinfo.eth_addr[2]), 
-         &(ifinfo.eth_addr[3]), &(ifinfo.eth_addr[4]), &(ifinfo.eth_addr[5]));
-  
-  if(ret != 6) {
-    print( ERROR, "fscanf: %s", strerror(errno));
-    ret = -1;
-    goto exit;
-  }
-  
-  ret = 0;
-  
-  exit:
-  
-  if(fp)
-    fclose(fp);
-  
-  if(path)
-    free(path);
-  
-  return ret;
-}
-
-int ioctl_get_L2_ifinfo(char *ifname) {
-  struct ifreq ir;
-  int fd;
-  
-  fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
-  
-  if(fd == -1) {
-    print( ERROR, "socket: %s", strerror(errno));
-    return -1;
-  }
-
-  memset(&ir, 0, sizeof(struct ifreq));
-  
-  strncpy(ir.ifr_name, ifname, IFNAMSIZ);
-  
-  if (ioctl(fd, SIOCGIFHWADDR, &ir) == -1) {
-    print( ERROR, "ioctl: %s", strerror(errno));
-    close(fd);
-    return -1;
-  }
-  
-  close(fd);
-  
-  memcpy(ifinfo.eth_addr, ir.ifr_addr.sa_data, ETH_ALEN);
-  
-  return 0;
-}
-
 /**
  * @brief get info about an interface and store them into ::ifinfo .
  * 
@@ -114,69 +39,83 @@ int ioctl_get_L2_ifinfo(char *ifname) {
  * @returns 0 on success, -1 on error.
  */
 int get_ifinfo(char *ifname) {
-  pcap_if_t *devlist, *dev;
-  pcap_addr_t *a;
-  struct sockaddr_in *i;
-  struct sockaddr_ll *l;
-  char err_buff[PCAP_ERRBUF_SIZE];
-  char status;
+  struct ifreq ifr;
+  int fd;
   
-  err_buff[0] = '\0';
-  status = (L2_NOT_FOUND | L3_NOT_FOUND);
+  memset(&ifinfo, 0, sizeof(ifinfo));
   
-  if(pcap_findalldevs(&devlist, err_buff)) {
-    print( ERROR, "pcap_findalldevs: %s", err_buff);
+  fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+  
+  if(fd == -1) {
+    print( WARNING, "socket: %s", strerror(errno));
     return -1;
   }
   
-  for(dev=devlist; dev && strncmp(dev->name, ifname, IFNAMSIZ); dev=dev->next);
+  memset(&ifr, 0, sizeof(struct ifreq));
+  strncpy(ifr.ifr_name, ifname, IFNAMSIZ-1);
+  ifr.ifr_name[IFNAMSIZ] = '\0';
   
-  if(!dev) {
-    print( ERROR, "device '%s' not found", ifname);
-    pcap_freealldevs(devlist);
-    return -1;
+  if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
+    print( WARNING, "ioctl: %s", strerror(errno));
+    print( ERROR, "unable to get link layer address");
+    goto error;
   }
   
-  for(a=dev->addresses;a && status;a=a->next) {
-    
-    if(a->addr->sa_family == AF_INET) {
-      i = (struct sockaddr_in *) a->addr;
-      
-      ifinfo.ip_addr = i->sin_addr.s_addr;
-      
-      i = (struct sockaddr_in *) a->netmask;
-      
-      if(i) {
-        ifinfo.ip_mask = i->sin_addr.s_addr;
-        status &= ~(L3_NOT_FOUND);
-      }
-    } else if(a->addr->sa_family == AF_PACKET) {
-      l = (struct sockaddr_ll *) a->addr;
-      
-      if(l->sll_halen != ETH_ALEN) continue;
-      
-      memcpy(ifinfo.eth_addr, l->sll_addr, ETH_ALEN);
-      status &= ~(L2_NOT_FOUND);
-    }
+  if(ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER) {
+    print( ERROR, "for the moment only Ethernet devices are supported");
+    goto error;
   }
   
-  pcap_freealldevs(devlist);
+  memcpy(ifinfo.eth_addr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
   
-  if((status & L2_NOT_FOUND) && (!ioctl_get_L2_ifinfo(ifname) || !sysfs_get_L2_ifinfo(ifname))) {
-    status &= ~(L2_NOT_FOUND);
+  memset(&(ifr.ifr_addr), 0, sizeof(ifr.ifr_addr));
+  ifr.ifr_addr.sa_family = AF_INET;
+  
+  if(ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
+    print( WARNING, "ioctl: %s", strerror(errno));
+    print( ERROR, "unable to get network address");
+    goto error;
   }
   
-  if(status) {
-    if(status & L2_NOT_FOUND) {
-      print( ERROR, "cannot find link layer address");
-    }
-    if(status & L3_NOT_FOUND) {
-      print( ERROR, "cannot find IPv4 address");
-    }
-    return -1;
+  ifinfo.ip_addr = ((struct sockaddr_in *) &(ifr.ifr_addr))->sin_addr.s_addr;
+  
+  if(ioctl(fd, SIOCGIFNETMASK, &ifr) == -1) {
+    print( WARNING, "ioctl: %s", strerror(errno));
+    print( ERROR, "unable to get network mask");
+    goto error;
   }
   
-  strncpy(ifinfo.name, ifname, IFNAMSIZ);
+  ifinfo.ip_mask = ((struct sockaddr_in *) &(ifr.ifr_addr))->sin_addr.s_addr;
+  
+  if(ioctl(fd, SIOCGIFMTU, &ifr) == -1) {
+    print( WARNING, "ioctl: %s", strerror(errno));
+    print( ERROR, "unable to get MTU");
+    goto error;
+  }
+  
+  ifinfo.mtu = ifr.ifr_mtu;
+  
+#ifndef HAVE_LIBPCAP
+  
+  if(ioctl(fd, SIOCGIFINDEX, &ifr) == -1) {
+    print( WARNING, "ioctl: %s", strerror(errno));
+    print( ERROR, "unable to get interface index");
+    goto error;
+  }
+  
+  ifinfo.index = ifr.ifr_ifindex;
+  
+#endif
+  
+  close(fd);
+  
+  memcpy(ifinfo.name, ifr.ifr_name, IFNAMSIZ);
   
   return 0;
+  
+  error:
+  
+  close(fd);
+  
+  return -1;
 }

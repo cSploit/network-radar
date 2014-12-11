@@ -15,15 +15,14 @@
  * along with cSploit.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <pcap.h>
 #include <pthread.h>
 #include <string.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 #include <time.h>
 #include <stddef.h>
+#include <unistd.h>
 
 #include "logger.h"
 
@@ -35,245 +34,278 @@
 #include "resolver.h"
 #include "prober.h"
 #include "ifinfo.h"
+#include "analyzer.h"
 
-pcap_t *handle;
+struct sniff_data sniffer_info;
 
-pthread_t sniffer_tid = 0;
-
-void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) {
-  struct host *h;
-  struct event *e;
-  int old_errno;
-  uint8_t e_type;
-  char lstatus;
-  
-  e_type = NONE;
-  
-  pthread_mutex_lock(&(hosts.control.mutex));
-  
-  h = get_host(ip);
-  
-  if(h) {
-    if(memcmp(mac, h->mac, ETH_ALEN)) {
-      memcpy(h->mac, mac, ETH_ALEN);
-      
-      e_type = MAC_CHANGED;
-    }
-    
-    if(name || e_type == MAC_CHANGED) {
-      if(h->name)
-        free(h->name);
-      h->name = name;
-    }
-    
-  } else {
-    h = malloc(sizeof(struct host));
-    
-    if(!h) {
-      old_errno = errno;
-      pthread_mutex_unlock(&(hosts.control.mutex));
-      print(ERROR, "malloc: %s", strerror(old_errno));
-      return;
-    }
-    
-    memset(h, 0, sizeof(struct host));
-    memcpy(h->mac, mac, ETH_ALEN);
-    h->name = name;
-    
-    set_host(ip, h);
-    
-    e_type = NEW_MAC;
-  }
-  
-  h->timeout = time(NULL) + HOST_TIMEOUT;
-  
-  lstatus = h->lookup_status;
-  h->lookup_status |= (HOST_LOOKUP_DNS|HOST_LOOKUP_NBNS);
-  
-  pthread_mutex_unlock(&(hosts.control.mutex));
-  
-  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_DNS)) {
-    begin_dns_lookup(ip);
-  }
-  
-  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_NBNS)) {
-    begin_nbns_lookup(ip);
-  }
-  
-  if(name)
-    e_type = NEW_NAME;
-  else if(e_type == NONE)
-    return;
-  
-  e = malloc(sizeof(struct event));
-  
-  if(!e) {
-    print( ERROR, "malloc: %s", strerror(errno));
-    return;
-  }
-  
-  e->ip = ip;
-  e->type = e_type;
-  
-  add_event(e);
-}
-
-void on_arp(struct ether_arp *arp) {
-  uint8_t *mac;
-  uint32_t ip;
-  
-  static const uint8_t arp_hwaddr_any[ETH_ALEN] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-  };
-  
-  // sanity check
-  if(arp->arp_hln != ETH_ALEN || arp->arp_pln != 4) {
-    return;
-  }
-  
-  // skip sent arp packets
-  if(!memcmp(arp->arp_sha, ifinfo.eth_addr, ETH_ALEN))
-    return;
-  
-  mac = (uint8_t *) arp->arp_tha;
-  ip = *((uint32_t *) arp->arp_tpa);
-  
-  process:
-  
-  if(ip != INADDR_ANY && ip != ifinfo.ip_addr) {
-    if(!memcmp(mac, ifinfo.eth_addr, ETH_ALEN)) {
-      // skip
-    } else if(memcmp(mac, arp_hwaddr_any, ETH_ALEN)) {
-      on_host_found(mac, ip, NULL, 0);
-    } else if (!get_host(ip)) {
-      // we dont have this host and someone want to talk to him
-      begin_nbns_lookup(ip);
-    }
-  }
-  
-  if(mac == (uint8_t *) arp->arp_tha) {
-    mac = (uint8_t *) arp->arp_sha;
-    ip = *((uint32_t *) arp->arp_spa);
-    goto process;
-  }
-}
-
-void on_udp(struct ether_header *eth) {
-  struct iphdr *ip;
-  struct udphdr *udp;
-  struct nbnshdr *nb;
-  char *nbname;
-  uint32_t host_ip;
-  uint8_t *host_mac;
-  
-  ip = (struct iphdr *) (eth+1);
-  udp = NULL;
-  nb = NULL;
-  nbname = NULL;
-  
-  if(!memcmp(eth->ether_dhost, ifinfo.eth_addr, ETH_ALEN)) {
-    // received UDP packet
-    
-    udp = (struct udphdr *) (((uint32_t *)ip) + ip->ihl);
-    nb = (struct nbnshdr *) (((uint8_t *)udp) + sizeof(struct udphdr));
-    
-    host_mac = eth->ether_shost;
-    
-    host_ip = ip->saddr;
-  } else {
-    // sent UDP packet
-    
-    host_mac = eth->ether_dhost;
-    host_ip = ip->daddr;
-  }
-  
-  if(nb) {
-    nbname = nbns_get_status_name(nb);
-  }
-  
-  on_host_found(host_mac, host_ip, nbname, HOST_LOOKUP_NBNS);
-}
-
+/**
+ * @brief the sniffer thread
+ */
 void *sniffer(void *arg) {
-  struct ether_header *eth;
-  struct iphdr *ip;
+#ifdef PROFILE
+  int enq_res = 0;
+  unsigned long int total_pkts = 0;
+  unsigned long int rejected_pkts = 0;
+  unsigned long int oom_pkts = 0;
+# ifdef BUG81370
+  unsigned long int bad_pkts = 0;
+# endif
+#endif /* PROFILE */
+#ifdef HAVE_LIBPCAP
   struct pcap_pkthdr pkthdr;
-  unsigned short int eth_type_arp;
-  uint16_t eth_type_ip;
+  char *bytes, *buffcopy;
   
-  eth_type_arp = htons(ETH_P_ARP);
-  eth_type_ip  = htons(ETH_P_IP);
-  
-  while((eth = (struct ether_header *) pcap_next(handle, &pkthdr))) {
-    if(eth->ether_type == eth_type_arp) {
-      on_arp((struct ether_arp *) (eth + 1));
-    } else if(eth->ether_type == eth_type_ip) {
-      ip = (struct iphdr *) (eth+1);
-      
-      if(ip->protocol == IPPROTO_UDP) {
-        on_udp(eth);
+  while((bytes = (char *) pcap_next(handle, &pkthdr))) {
+# ifdef PROFILE
+    total_pkts++;
+    
+    buffcopy = malloc(pkthdr.caplen);
+    if(buffcopy) {
+      memcpy(buffcopy, bytes, pkthdr.caplen);
+      enq_res = enqueue_packet(buffcopy, pkthdr.len, pkthdr.caplen);
+      if(enq_res) {
+        free(buffcopy);
+        if(enq_res == -2)
+          oom_pkts++;
+        else
+          rejected_pkts++;
+      }
+    } else {
+      oom_pkts++;
+    }
+# else
+    buffcopy = malloc(pkthdr.caplen);
+    
+    if(buffcopy) {
+      memcpy(buffcopy, bytes, pkthdr.caplen);
+      if(enqueue_packet(buffcopy, pkthdr.len, pkthdr.caplen)) {
+        free(buffcopy);
       }
     }
+# endif /* PROFILE */
   }
   
+#else /* HAVE_LIBPCAP */
+  int pktlen, caplen;
+  struct sockaddr_ll from;
+  char *buffcopy;
+  socklen_t fromlen;
+# ifdef BUG81370
+  struct ether_header *eth;
+# endif
+
+#ifndef MIN
+#define MIN(a, b) (a < b ? a : b)
+#endif
+  
+  fromlen = sizeof(from);
+  memset(&from, 0, fromlen);
+  
+  /* i decided to not lock the sniffer_info.control.mutex
+   * for check sniffer_info.control.active to save time.
+   * sniffer_info.control.active is initially set to 1,
+   * and changes only one time to 0.
+   */
+  
+  while(sniffer_info.control.active) {
+    
+    pktlen = recvfrom( sniffer_info.sockfd, sniffer_info.buffer,
+                       sniffer_info.bufflen, MSG_TRUNC,
+                       (struct sockaddr *) &from, &fromlen);
+    
+    if(pktlen == -1) {
+      if(errno == EINTR) {
+        continue;
+      } else if(errno != EBADF || (sniffer_info.control.active)) {
+        print( ERROR, "recvfrom: %s", strerror(errno));
+      }
+      break;
+    } else if(pktlen == 0) { // socket has been shutted down
+      break;
+    } else if(pktlen < ETH_HLEN) {
+      continue;
+    }
+    
+    caplen = MIN(pktlen, sniffer_info.bufflen);
+    
+    buffcopy = malloc(caplen);
+    
+# ifdef PROFILE
+    total_pkts++;
+    if(!buffcopy) {
+      oom_pkts++;
+      continue;
+    }
+# else
+    if(!buffcopy) continue;
+# endif
+    
+    memcpy(buffcopy, sniffer_info.buffer, caplen);
+    
+# ifdef BUG81370
+    
+    eth = (struct ether_header *) buffcopy;
+    
+    if(memcmp(eth->ether_shost, from.sll_addr, ETH_ALEN)) {
+#  ifdef PROFILE
+      bad_pkts++;
+#  endif
+      free(buffcopy);
+      continue; // skip corrupted packets
+    }
+    
+# endif /* BUG81370 */
+
+# ifdef PROFILE
+    enq_res = enqueue_packet(buffcopy, pktlen, caplen);
+    if(enq_res) {
+      free(buffcopy);
+      if(enq_res == -2) {
+        oom_pkts++;
+      } else {
+        rejected_pkts++;
+      }
+    }
+# else
+    if(enqueue_packet(buffcopy, pktlen, caplen)) {
+      free(buffcopy);
+    }
+# endif
+    
+  }
+
+#endif /* HAVE_LIBPCAP */
+
+#ifdef PROFILE
+# ifdef BUG81370
+  print( DEBUG, "sniffed %lu packets, %lu corrupted, %lu lost for OOM, %lu rejected",
+          total_pkts, bad_pkts, oom_pkts, rejected_pkts);
+# else
+  print( DEBUG, "packets: %lu sniffed, %lu lost for OOM, %lu rejected",
+          total_pkts, oom_pkts, rejected_pkts);
+# endif /* BUG81370 */
+#endif /* PROFILE */
+
+  print( DEBUG, "quitting");
+
+  free(sniffer_info.buffer);
+
   return NULL;
 }
 
 /**
- * @brief start sniffing on @p interface
- * @param interface the interface to sniff on
+ * @brief start sniffing
  * @returns 0 on success, -1 on error.
  */
 int start_sniff() {
-  char err_buff[PCAP_ERRBUF_SIZE];
-  struct bpf_program filter;
+#ifdef HAVE_LIBPCAP
+  char errbuff[PCAP_ERRBUF_SIZE];
+  char filter_str[81];
   
-  *err_buff = '\0';
+  *errbuff = '\0';
+
+  sniffer_info.handle = pcap_open_live(ifinfo.name, ifinfo.mtu + ETH_HLEN, 0, 1000, errbuff);
   
-  handle = pcap_open_live(ifinfo.name, 1514, 0, 0, err_buff);
-  
-  if(!handle) {
-    print( ERROR, "pcap_open_live: %s", err_buff);
+  if(!sniffer_info.handle) {
+    print( ERROR, "pcap_open_live: %s", errbuff);
     return -1;
   }
   
-  if(*err_buff) {
-    print( ERROR, "pcap_open_live: %s", err_buff);
+  if(*errbuff) {
+    print( WARNING, "pcap_open_live: %s", errbuff);
   }
   
-  if(pcap_datalink(handle) != DLT_EN10MB) {
-    print( ERROR, "Device %s doesn't provide Ethernet headers - not supported\n", ifinfo.name);
-    pcap_close(handle);
-    return -1;
-  }
+  snprintf(filter_str, 81,
+    "((( arp or rarp ) and ether src not %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx ) or ( udp and port 137 ))",
+    ifinfo.eth_addr[0], ifinfo.eth_addr[1], ifinfo.eth_addr[2],
+    ifinfo.eth_addr[3], ifinfo.eth_addr[4], ifinfo.eth_addr[5]);
   
-  if(pcap_compile(handle, &filter, "( ( arp or rarp ) or ( udp and port 137 ))", 1, (bpf_u_int32) ifinfo.ip_mask)) {
+  if(pcap_compile(sniffer_info.handle, &filter, filter_str, 1, (bpf_u_int32) ifinfo.ip_mask)) {
     print( ERROR, "pcap_compile: %s", pcap_geterr(handle));
-    pcap_close(handle);
-    return -1;
+    print( DEBUG, "filter: '%s'", filter_str);
+    goto error;
   }
   
   if(pcap_setfilter(handle, &filter)) {
     print( ERROR, "pcap_setfilter: %s", pcap_geterr(handle));
-    pcap_close(handle);
+    goto error;
+  }
+  
+#else /* HAVE_LIBPCAP */
+  struct sockaddr_ll  sll;
+  int     err;
+  socklen_t   errlen = sizeof(err);
+  
+  /* pcap_open_live for Linux */
+  memset(&sll, 0, sizeof(sll));
+  sll.sll_family    = AF_PACKET;
+  sll.sll_ifindex   = ifinfo.index;
+  sll.sll_protocol  = htons(ETH_P_ALL);
+  
+  sniffer_info.sockfd = socket(PF_PACKET, SOCK_RAW, sll.sll_protocol);
+  
+  if(sniffer_info.sockfd == -1) {
+    print( ERROR, "socket: %s", strerror(errno));
     return -1;
+  }
+
+  if (bind(sniffer_info.sockfd, (struct sockaddr *) &sll, sizeof(sll)) == -1) {
+    print( ERROR, "bind: %s\n", strerror(errno));
+    goto error;
+  }
+
+  /* Any pending errors, e.g., network is down? */
+
+  if (getsockopt(sniffer_info.sockfd, SOL_SOCKET, SO_ERROR, &err, &errlen) == -1) {
+    print( ERROR, "getsockopt: %s\n", strerror(errno));
+    goto error;
+  }
+
+  if (err > 0) {
+    print( ERROR, "bind: %s\n", strerror(err));
+    goto error;
+  }
+  
+  /* pcap_open_live ends */
+
+#endif /* HAVE_LIBPCAP */
+  
+  sniffer_info.bufflen = ifinfo.mtu + ETH_HLEN;
+  
+  sniffer_info.buffer = malloc(sniffer_info.bufflen);
+  
+  if(!(sniffer_info.buffer)) {
+    print( ERROR, "malloc: %s", strerror(errno));
+    goto error;
   }
   
   if(init_hosts()) {
-    pcap_close(handle);
     print( ERROR, "init_hosts: %s", strerror(errno));
-    return -1;
+    goto hosts_error;
   }
   
-  if(pthread_create(&sniffer_tid, NULL, sniffer, NULL)) {
-    sniffer_tid = 0;
-    pcap_close(handle);
-    free(hosts.array);
+  if(pthread_create(&(sniffer_info.tid), NULL, sniffer, NULL)) {
     print( ERROR, "pthread_create: %s", strerror(errno));
-    return -1;
+    goto pthread_error;
   }
   
   return 0;
+  
+  pthread_error:
+  sniffer_info.tid = 0;
+  free(hosts.array);
+  
+  hosts_error:
+  free(sniffer_info.buffer);
+  
+  error:
+#ifdef HAVE_LIBPCAP
+  pcap_close(sniffer_info.handle);
+#else
+  close(sniffer_info.sockfd);
+#endif
+  
+  return -1;
 }
 
 /**
@@ -281,12 +313,20 @@ int start_sniff() {
  */
 void stop_sniff() {
   pthread_t tid;
+
+  pthread_mutex_lock(&(sniffer_info.control.mutex));
+  tid = sniffer_info.tid;
+  sniffer_info.tid = 0;
+  sniffer_info.control.active = 0;
+  pthread_mutex_unlock(&(sniffer_info.control.mutex));
   
-  if(sniffer_tid) {
-    tid = sniffer_tid;
-    sniffer_tid = 0;
-    
-    pcap_close(handle);
-    pthread_join(tid, NULL);
-  }
+  if(!tid)
+    return;
+  
+#ifdef HAVE_LIBPCAP
+  pcap_close(sniffer_info.handle);
+#else
+  close(sniffer_info.sockfd);
+#endif
+  pthread_join(tid, NULL);
 }

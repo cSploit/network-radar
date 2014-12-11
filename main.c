@@ -31,8 +31,10 @@
 #include "host.h"
 #include "ifinfo.h"
 #include "main.h"
+#include "analyzer.h"
 
 void stop(int signal) {
+  stop_analyzer();
   stop_sniff();
   stop_notifier();
   stop_prober();
@@ -74,8 +76,53 @@ int register_signal_handlers() {
   return 0;
 }
 
+int init_controls() {
+  memset(&(events.control), 0, sizeof(struct data_control));
+  memset(&(hosts.control), 0, sizeof(struct data_control));
+  memset(&(sniffer_info.control), 0, sizeof(struct data_control));
+  memset(&(resolver_info.control), 0, sizeof(struct data_control));
+  memset(&(prober_info.control), 0, sizeof(struct data_control));
+  
+  if(control_init(&(events.control)))
+    return -1;
+  
+  if(control_init(&(hosts.control))) goto e1;
+    
+  if(control_init(&(sniffer_info.control))) goto e2;
+    
+  if(control_init(&(resolver_info.control))) goto e3;
+  
+  if(control_init(&(prober_info.control))) goto e4;
+  
+  if(control_init(&(analyze.control))) goto e5;
+  
+  return 0;
+  
+  e5:
+  control_destroy(&(prober_info.control));
+  e4:
+  control_destroy(&(resolver_info.control));
+  e3:
+  control_destroy(&(sniffer_info.control));
+  e2:
+  control_destroy(&(hosts.control));
+  e1:
+  control_destroy(&(events.control));
+  
+  return -1;
+}
+
+void destroy_controls() {
+  control_destroy(&(prober_info.control));
+  control_destroy(&(resolver_info.control));
+  control_destroy(&(sniffer_info.control));
+  control_destroy(&(hosts.control));
+  control_destroy(&(events.control));
+}
+
 int main(int argc, char **argv) {
   char *prog_name;
+  int ret;
   
   if(argc < 2 || !strncmp(argv[1], "-h", 3) || !strncmp(argv[1], "--help", 7) ) {
     prog_name = strrchr(argv[0], '/');
@@ -94,30 +141,32 @@ int main(int argc, char **argv) {
   
   if(register_signal_handlers())
     return EXIT_FAILURE;
-  
-  if(control_init(&(events.control)))
+    
+  if(init_controls())
     return EXIT_FAILURE;
   
-  if(control_init(&(hosts.control)))
-    return EXIT_FAILURE;
+  if(init_prober()) goto exit;
   
-  if(init_prober()) goto error;
+  if(start_analyzer()) goto exit;
   
-  if(start_notifier()) goto error;
+  if(start_notifier()) goto exit;
   
-  if(start_resolver()) goto error;
+  if(start_resolver()) goto exit;
   
-  if(start_sniff()) goto error;
+  if(start_sniff()) goto exit;
   
   prober(NULL);
   
-  return EXIT_SUCCESS;
+  ret = 0;
   
-  error:
+  exit:
   stop_prober();
+  stop_analyzer();
   stop_sniff();
   stop_notifier();
   stop_resolver();
   
-  return EXIT_FAILURE;
+  destroy_controls();
+  
+  return ret;
 }

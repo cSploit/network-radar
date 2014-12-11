@@ -18,10 +18,20 @@
 #ifndef RESOLVER_H
 #define RESOLVER_H
 
+#include <pthread.h>
 #include <stdint.h>
+#include <ares.h>
+
+#include "control.h"
 
 void begin_dns_lookup(uint32_t);
 int start_resolver(void);
 void stop_resolver(void);
+
+extern struct resolver_data {
+  data_control control;
+  pthread_t tid;
+  ares_channel channel;
+} resolver_info;
 
 #endif
