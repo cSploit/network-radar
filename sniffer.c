@@ -91,7 +91,7 @@ void *sniffer(void *arg) {
   char *buffcopy;
   socklen_t fromlen;
 # ifdef BUG81370
-  struct ether_header *eth;
+  struct ether_header ethhdr;
 # endif
 
 #ifndef MIN
@@ -128,33 +128,35 @@ void *sniffer(void *arg) {
     
     caplen = MIN(pktlen, sniffer_info.bufflen);
     
-    buffcopy = malloc(caplen);
-    
 # ifdef PROFILE
     total_pkts++;
-    if(!buffcopy) {
-      oom_pkts++;
+# endif
+    
+# ifdef BUG81370
+    memcpy(&ethhdr, sniffer_info.buffer, ETH_HLEN);
+    if(memcmp(ethhdr.ether_shost, from.sll_addr, ETH_ALEN)) {
+#  ifdef PROFILE
+      bad_pkts++;
+#  endif
       continue;
     }
-# else
-    if(!buffcopy) continue;
 # endif
+    
+    buffcopy = malloc(caplen);
+    
+
+    if(!buffcopy) {
+# ifdef PROFILE
+      oom_pkts++;
+# endif
+      continue;
+    }
     
     memcpy(buffcopy, sniffer_info.buffer, caplen);
     
 # ifdef BUG81370
-    
-    eth = (struct ether_header *) buffcopy;
-    
-    if(memcmp(eth->ether_shost, from.sll_addr, ETH_ALEN)) {
-#  ifdef PROFILE
-      bad_pkts++;
-#  endif
-      free(buffcopy);
-      continue; // skip corrupted packets
-    }
-    
-# endif /* BUG81370 */
+    memcpy(buffcopy, &ethhdr, ETH_HLEN);
+# endif
 
 # ifdef PROFILE
     enq_res = enqueue_packet(buffcopy, pktlen, caplen);
