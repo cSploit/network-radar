@@ -20,8 +20,10 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include "logger.h"
+#include "file_logger.h"
 
 #include "event.h"
 #include "sniffer.h"
@@ -131,6 +133,13 @@ int main(int argc, char **argv) {
     print( ERROR, "Usage: %s <interface>\n", prog_name);
     return EXIT_FAILURE;
   }
+  
+  if(open_logfile("./network-monitor.log")) {
+    print( ERROR, "cannot open logfile");
+    return EXIT_FAILURE;
+  }
+  
+  set_logger(file_logger);
   
   if(get_ifinfo(argv[1]))
     return EXIT_FAILURE;
