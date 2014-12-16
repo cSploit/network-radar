@@ -37,6 +37,12 @@ struct prober_data prober_info;
 int init_prober() {
 #ifdef HAVE_LIBPCAP
   char err_buff[PCAP_ERRBUF_SIZE];
+  
+#else
+  struct sockaddr_ll sll;
+  int err;
+  socklen_t errlen;
+  
 #endif
   
   
@@ -55,6 +61,7 @@ int init_prober() {
   
   if(!(prober_info.handle)) {
     print( ERROR, "pcap_open_live: %s", err_buff);
+    close(prober_info.nbns_sockfd);
     return -1;
   }
   
@@ -68,6 +75,34 @@ int init_prober() {
   
   if(prober_info.arp_sockfd == -1) {
     print( ERROR, "socket: %s", strerror(errno));
+    close(prober_info.nbns_sockfd);
+    return -1;
+  }
+  
+  memset(&sll, 0, sizeof(sll));
+  
+  sll.sll_family = AF_PACKET;
+  sll.sll_protocol = htons(ETH_P_ARP);
+  sll.sll_ifindex = ifinfo.index;
+  
+  if(bind(prober_info.arp_sockfd, (struct sockaddr *) &sll, sizeof(sll)) == -1) {
+    print( ERROR, "bind: %s", strerror(errno));
+    close(prober_info.nbns_sockfd);
+    close(prober_info.arp_sockfd);
+    return -1;
+  }
+  
+  errlen = sizeof(err);
+  
+  if (getsockopt(prober_info.arp_sockfd, SOL_SOCKET, SO_ERROR, &err, &errlen) == -1) {
+    print( ERROR, "getsockopt: %s", strerror(errno));
+    close(prober_info.nbns_sockfd);
+    close(prober_info.arp_sockfd);
+    return -1;
+  }
+  
+  if(err > 0) {
+    print( ERROR, "bind: %s", strerror(err));
     close(prober_info.nbns_sockfd);
     close(prober_info.arp_sockfd);
     return -1;
@@ -136,6 +171,33 @@ void full_scan() {
   }
 }
 
+void send_arp_probe(uint32_t ip) {
+#ifndef HAVE_LIBPCAP
+  struct sockaddr_ll sll;
+#endif
+  
+  memcpy(&(prober_info.arp_request.arp_tpa), &ip, 4);
+  
+#ifdef HAVE_LIBPCAP
+  if(pcap_inject(prober_info.handle, &(prober_info.arp_request), sizeof(struct arp_packet)) == -1) {
+    print( WARNING, "pcap_inject: %s", pcap_geterr(prober_info.handle));
+  }
+#else
+  memset(&sll, 0, sizeof(sll));
+  
+  sll.sll_family = AF_PACKET;
+  sll.sll_ifindex = ifinfo.index;
+  sll.sll_protocol = htons(ETH_P_ARP);
+  memset(&(sll.sll_addr), 0xFF, ETH_ALEN);
+  
+  if(sendto(prober_info.arp_sockfd, &(prober_info.arp_request), sizeof(struct arp_packet),
+              0, (struct sockaddr *) &sll, sizeof(sll)) == -1) {
+    print( WARNING, "sendto: %s", strerror(errno));
+  }
+  
+#endif
+}
+
 void *prober(void *arg) {
   uint32_t max_index, i, ip;
   useconds_t delay;
@@ -173,15 +235,8 @@ void *prober(void *arg) {
         
         if(time(NULL) < timeout) {
         
-          memcpy(&(prober_info.arp_request.arp_tpa), &ip, 4);
+          send_arp_probe(ip);
           
-          #ifdef HAVE_LIBPCAP
-          if(pcap_inject(prober_info.handle, &(prober_info.arp_request), sizeof(struct arp_packet)) == -1) {
-            print( WARNING, "pcap_inject: %s", pcap_geterr(prober_info.handle));
-          }
-          #else
-          // TODO: send arp packets ( arpd.c )
-          #endif
         } else {
           pthread_mutex_lock(&(hosts.control.mutex));
           hosts.array[i] = NULL;
