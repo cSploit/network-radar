@@ -55,7 +55,7 @@ void *sniffer(void *arg) {
   struct pcap_pkthdr pkthdr;
   char *bytes, *buffcopy;
   
-  while((bytes = (char *) pcap_next(handle, &pkthdr))) {
+  while((bytes = (char *) pcap_next(sniffer_info.handle, &pkthdr))) {
 # ifdef PROFILE
     total_pkts++;
     
@@ -203,6 +203,7 @@ int start_sniff() {
 #ifdef HAVE_LIBPCAP
   char errbuff[PCAP_ERRBUF_SIZE];
   char filter_str[81];
+  struct bpf_program filter;
   
   *errbuff = '\0';
 
@@ -223,13 +224,13 @@ int start_sniff() {
     ifinfo.eth_addr[3], ifinfo.eth_addr[4], ifinfo.eth_addr[5]);
   
   if(pcap_compile(sniffer_info.handle, &filter, filter_str, 1, (bpf_u_int32) ifinfo.ip_mask)) {
-    print( ERROR, "pcap_compile: %s", pcap_geterr(handle));
+    print( ERROR, "pcap_compile: %s", pcap_geterr(sniffer_info.handle));
     print( DEBUG, "filter: '%s'", filter_str);
     goto error;
   }
   
-  if(pcap_setfilter(handle, &filter)) {
-    print( ERROR, "pcap_setfilter: %s", pcap_geterr(handle));
+  if(pcap_setfilter(sniffer_info.handle, &filter)) {
+    print( ERROR, "pcap_setfilter: %s", pcap_geterr(sniffer_info.handle));
     goto error;
   }
   

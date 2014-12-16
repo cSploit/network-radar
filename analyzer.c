@@ -50,12 +50,12 @@ struct packet_node {
  */
 int enqueue_packet(char *packet, int pktlen, int caplen) {
   struct packet_node *p;
+  char analyze_it;
 #ifndef HAVE_LIBPCAP
   struct ether_header *eth;
   struct ether_arp *arp;
   struct iphdr *ip;
   struct udphdr *udp;
-  char analyze_it;
 #endif
   
   p = malloc(sizeof(struct packet_node));
@@ -68,11 +68,11 @@ int enqueue_packet(char *packet, int pktlen, int caplen) {
   p->packet = packet;
   p->pktlen = pktlen;
   p->caplen = caplen;
+  analyze_it = 0;
 
 #ifndef HAVE_LIBPCAP
   // do what pcap-filter does
   
-  analyze_it = 0;
   eth = (struct ether_header *) p->packet;
   
   // the following is the same as this pacp filter:

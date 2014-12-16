@@ -157,7 +157,7 @@ void *prober(void *arg) {
           
           #ifdef HAVE_LIBPCAP
           if(pcap_inject(prober_info.handle, &(prober_info.arp_request), sizeof(struct arp_packet)) == -1) {
-            print( WARNING, "pcap_inject: %s", pcap_geterr(handle));
+            print( WARNING, "pcap_inject: %s", pcap_geterr(prober_info.handle));
           }
           #else
           // TODO: send arp packets ( arpd.c )

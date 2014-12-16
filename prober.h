@@ -40,7 +40,7 @@ extern struct prober_data {
   pthread_t tid;
   int nbns_sockfd;
 #ifdef HAVE_LIBPCAP
-  pcap_t handle;
+  pcap_t *handle;
 #else
   int arp_sockfd;
 #endif
