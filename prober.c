@@ -35,6 +35,11 @@
 struct prober_data prober_info;
 
 int init_prober() {
+#ifdef HAVE_LIBPCAP
+  char err_buff[PCAP_ERRBUF_SIZE];
+#endif
+  
+  
   prober_info.nbns_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   
   if(prober_info.nbns_sockfd == -1) {
@@ -42,7 +47,22 @@ int init_prober() {
     return -1;
   }
   
-#ifndef HAVE_LIBPCAP
+#ifdef HAVE_LIBPCAP
+
+  *err_buff = '\0';
+
+  prober_info.handle = pcap_open_live(ifinfo.name, ifinfo.mtu + ETH_HLEN, 0, 1000, err_buff);
+  
+  if(!(prober_info.handle)) {
+    print( ERROR, "pcap_open_live: %s", err_buff);
+    return -1;
+  }
+  
+  if(*err_buff) {
+    print( WARNING, "pcap_open_live: %s", err_buff);
+  }
+  
+#else
   
   prober_info.arp_sockfd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   
