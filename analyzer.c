@@ -87,7 +87,7 @@ int enqueue_packet(char *packet, int pktlen, int caplen) {
       }
     }
   } else if(eth->ether_type == htons(ETH_P_ARP)) {
-    arp = (struct ether_arp *) eth;
+    arp = (struct ether_arp *) (eth+1);
     
     if(memcmp(arp->arp_sha, ifinfo.eth_addr, ETH_ALEN)) {
       analyze_it = 1;
@@ -222,7 +222,7 @@ void *analyzer(void *arg) {
     eth = (struct ether_header *) p->packet;
     
     if(eth->ether_type == htons(ETH_P_ARP)) {
-      analyze_arp((struct ether_arp *) eth);
+      analyze_arp((struct ether_arp *) (eth+1));
     } else {
       analyze_udp(eth);
     }
