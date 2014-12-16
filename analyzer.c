@@ -275,6 +275,8 @@ void stop_analyzer() {
   analyze.control.active = 0;
   pthread_mutex_unlock(&(analyze.control.mutex));
   
+  pthread_cond_broadcast(&(analyze.control.cond));
+  
   if(!tid) return;
   
   pthread_join(tid, NULL);
