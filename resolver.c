@@ -121,7 +121,8 @@ void *resolver(void *arg) {
 }
 
 int start_resolver() {
-  int ret;
+  int ret, optmask;
+  struct ares_options options;
   
   ret = ares_library_init(ARES_LIB_INIT_ALL);
   
@@ -130,10 +131,21 @@ int start_resolver() {
     return -1;
   }
   
-  ret = ares_init(&(resolver_info.channel));
+  memset(&options, 0, sizeof(struct ares_options));
+  
+  options.flags = ARES_FLAG_STAYOPEN;
+  
+#ifndef RESOLVER_USE_HOST_FILE
+  optmask = ARES_OPT_FLAGS | ARES_OPT_LOOKUPS;
+  options.lookups = "b";
+#else
+  optmask = ARES_OPT_FLAGS;
+#endif
+  
+  ret = ares_init_options(&(resolver_info.channel), &options, optmask);
   
   if(ret) {
-    print( ERROR, "ares_init: %s\n", ares_strerror(ret));
+    print( ERROR, "ares_init_options: %s\n", ares_strerror(ret));
     ares_library_cleanup();
     return -1;
   }
@@ -158,9 +170,9 @@ void stop_resolver() {
   resolver_info.control.active = 0;
   pthread_mutex_unlock(&(resolver_info.control.mutex));
   
-  pthread_cond_broadcast(&(resolver_info.control.cond));
-  
   if(!tid) return;
+  
+  pthread_cond_broadcast(&(resolver_info.control.cond));
   
   ares_destroy(resolver_info.channel);
   pthread_join(tid, NULL);
