@@ -202,7 +202,7 @@ void *analyzer(void *arg) {
   
   pthread_mutex_lock(&(analyze.control.mutex));
   
-  while(analyze.control.active || analyze.list.head) {
+  while(analyze.control.active) {
     
     while(analyze.control.active && !(analyze.list.head)) {
       pthread_cond_wait(&(analyze.control.cond), &(analyze.control.mutex));
@@ -231,6 +231,13 @@ void *analyzer(void *arg) {
     free(p);
     
     pthread_mutex_lock(&(analyze.control.mutex));
+  }
+  
+  while(analyze.list.head) {
+    p = (struct packet_node *) queue_get(&(analyze.list));
+    
+    free(p->packet);
+    free(p);
   }
   
 #ifdef PROFILE
