@@ -66,7 +66,7 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) 
   struct event *e;
   int old_errno;
   uint8_t e_type;
-  char lstatus;
+  char lstatus, host_has_name;
   
   e_type = NONE;
   
@@ -108,16 +108,18 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) 
   
   h->timeout = time(NULL) + HOST_TIMEOUT;
   
-  lstatus = h->lookup_status;
+  lstatus = h->lookup_status | assumed_lstatus;
   h->lookup_status |= (HOST_LOOKUP_DNS|HOST_LOOKUP_NBNS);
+  
+  host_has_name = h->name != NULL;
   
   pthread_mutex_unlock(&(hosts.control.mutex));
   
-  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_DNS)) {
+  if(!(lstatus & HOST_LOOKUP_DNS) && !host_has_name) {
     begin_dns_lookup(ip);
   }
   
-  if(!((lstatus | assumed_lstatus) & HOST_LOOKUP_NBNS)) {
+  if(!(lstatus & HOST_LOOKUP_NBNS)) {
     begin_nbns_lookup(ip);
   }
   
