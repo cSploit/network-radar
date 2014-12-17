@@ -45,7 +45,6 @@ int init_prober() {
   
 #endif
   
-  
   prober_info.nbns_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   
   if(prober_info.nbns_sockfd == -1) {
@@ -134,6 +133,8 @@ int init_prober() {
 
 void begin_nbns_lookup(uint32_t ip) {
   struct sockaddr_in addr;
+  
+  if(prober_info.nbns_sockfd == -1) return;
   
   memset(&addr, 0, sizeof(addr));
   
@@ -267,6 +268,7 @@ void *prober(void *arg) {
   pthread_mutex_unlock(&(hosts.control.mutex));
   
   close(prober_info.nbns_sockfd);
+  prober_info.nbns_sockfd = -1;
   
   return NULL;
 }
