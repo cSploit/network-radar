@@ -20,45 +20,106 @@
 #include <math.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <assert.h>
 
 #include "logger.h"
 
 #include "ifinfo.h"
 #include "host.h"
+#include "netdefs.h"
 #include "event.h"
 #include "prober.h"
 #include "resolver.h"
+#include "sorted_arraylist.h"
 
 struct hosts_data hosts;
 
 /**
- * @brief initalize host table
- * @param ip interface ip address
- * @param mask interface network mask
+ * @brief initalize host data
  * @returns 0 on success, -1 on error.
  */
 int init_hosts() {
-  int zerobits,b;
   
-  for(zerobits=b=0;b<32;b++) {
-    if(!((ifinfo.ip_mask >> b) & 1))
-      zerobits++;
-  }
-  
-  // UINT32_MAX = 2^32 -1
-  hosts.maxindex = (pow(2, zerobits) - 1);
-  
-  hosts.array = calloc(sizeof(struct host *), ((uint64_t)hosts.maxindex) + 1);
-  
-  if(!hosts.array) {
-    print( ERROR, "calloc: %s\n", strerror(errno));
-    return -1;
-  }
-  
-  hosts.mask = ~ifinfo.ip_mask;
-  hosts.base_ip = ifinfo.ip_addr & ifinfo.ip_mask;
+  hosts.array = NULL;
+  hosts.size = 0;
   
   return 0;
+}
+
+struct host *get_host(uint32_t ip) {
+  
+  if(!(hosts.array)) return NULL;
+  
+  return (struct host *) sortedarray_get((array *) &hosts, ip);
+}
+
+struct host *create_host(uint32_t ip, uint8_t *mac, char *name) {
+  struct host *h;
+  
+  h = malloc(sizeof(struct host));
+  
+  if(!h) {
+    print( ERROR, "malloc: %s", strerror(errno));
+    return NULL;
+  }
+  
+  memset(h, 0, sizeof(struct host));
+  
+  h->ip = ip;
+  memcpy(h->mac, mac, ETH_ALEN);
+  h->name = name;
+  
+  return h;
+}
+
+
+
+#ifndef NDEBUG
+static struct host **dump_ptr;
+# define DUMP_HOSTS() do {\
+    if(!(hosts.size)) { \
+      print( DEBUG, "  no hosts");\
+    } else {\
+      dump_ptr = hosts.array + hosts.size - 1;\
+      print ( DEBUG, "hosts:");\
+      for(;dump_ptr >= hosts.array; dump_ptr--) {\
+        print( DEBUG, "  - %u.%u.%u.%u { %02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX } [ %s ]",\
+              ((uint8_t *) &((**dump_ptr).ip))[0], ((uint8_t *) &((**dump_ptr).ip))[1],\
+              ((uint8_t *) &((**dump_ptr).ip))[2], ((uint8_t *) &((**dump_ptr).ip))[3],\
+              (**dump_ptr).mac[0], (**dump_ptr).mac[1], (**dump_ptr).mac[2], (**dump_ptr).mac[3],\
+              (**dump_ptr).mac[4], (**dump_ptr).mac[5], (**dump_ptr).name);\
+      }\
+    }\
+  } while(0);
+#else /* NDEBUG */
+# define DUMP_HOSTS()
+#endif
+
+/**
+ * @brief add an host to the host array
+ * @param h the host to add
+ * @returns 0 on success, -1 on error.
+ * 
+ * do not add an already existing host!
+ */
+int add_host(struct host *h) {
+  int ret;
+  
+  ret = sortedarray_ins((array *) &hosts, (comparable_item *) h);
+  
+  DUMP_HOSTS();
+  
+  return ret;
+}
+
+int del_host(struct host *h) {
+  int ret;
+  
+  ret = sortedarray_del((array *) &hosts, (comparable_item *) h);
+  
+  DUMP_HOSTS();
+  
+  return ret;
 }
 
 void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) {
@@ -88,7 +149,7 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) 
     }
     
   } else {
-    h = malloc(sizeof(struct host));
+    h = create_host(ip, mac, name);
     
     if(!h) {
       old_errno = errno;
@@ -97,11 +158,11 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) 
       return;
     }
     
-    memset(h, 0, sizeof(struct host));
-    memcpy(h->mac, mac, ETH_ALEN);
-    h->name = name;
-    
-    set_host(ip, h);
+    if(sortedarray_ins((array *) &hosts, (comparable_item *) h)) {
+      pthread_mutex_unlock(&(hosts.control.mutex));
+      free_host(h);
+      return;
+    }
     
     e_type = NEW_MAC;
   }
@@ -112,6 +173,8 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) 
   h->lookup_status |= (HOST_LOOKUP_DNS|HOST_LOOKUP_NBNS);
   
   host_has_name = h->name != NULL;
+  
+  DUMP_HOSTS();
   
   pthread_mutex_unlock(&(hosts.control.mutex));
   
