@@ -207,7 +207,7 @@ int start_sniff() {
   
   *errbuff = '\0';
 
-  sniffer_info.handle = pcap_open_live(ifinfo.name, ifinfo.mtu + ETH_HLEN, 0, 1000, errbuff);
+  sniffer_info.handle = pcap_open_live(ifinfo.name, ifinfo.mtu + ETH_HLEN, 0, 0, errbuff);
   
   if(!sniffer_info.handle) {
     print( ERROR, "pcap_open_live: %s", errbuff);
