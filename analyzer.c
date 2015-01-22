@@ -132,6 +132,7 @@ void analyze_arp(struct ether_arp *arp) {
   
   // sanity check
   if(arp->arp_hln != ETH_ALEN || arp->arp_pln != 4) {
+    print( WARNING, "corrupted ethernet frame");
     return;
   }
   
@@ -151,7 +152,7 @@ void analyze_arp(struct ether_arp *arp) {
       on_host_found(d_mac, d_ip, NULL, 0);
     } else if (!get_host(d_ip)) {
       // we dont have this host and someone want to talk to him
-      begin_nbns_lookup(d_ip);
+      begin_arp_lookup(d_ip);
     }
   }
 }

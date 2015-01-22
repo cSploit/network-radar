@@ -159,10 +159,16 @@ void begin_nbns_lookup(uint32_t ip) {
   }
 }
 
-void send_arp_probe(uint32_t ip) {
+static void send_arp_probe(uint32_t ip, uint8_t *mac) {
 #ifndef HAVE_LIBPCAP
   struct sockaddr_ll sll;
 #endif
+  
+  if(mac) {
+    memcpy(prober_info.arp_request.eh.ether_dhost, mac, ETH_ALEN);
+  } else {
+    memset(prober_info.arp_request.eh.ether_dhost, 0xFF, ETH_ALEN);
+  }
   
   memcpy(&(prober_info.arp_request.arp_tpa), &ip, 4);
   
@@ -184,6 +190,12 @@ void send_arp_probe(uint32_t ip) {
   }
   
 #endif
+}
+
+void begin_arp_lookup(uint32_t ip) {
+  pthread_mutex_lock(&(prober_info.control.mutex));
+  send_arp_probe(ip, NULL);
+  pthread_mutex_unlock(&(prober_info.control.mutex));
 }
 
 void *prober(void *arg) {
@@ -224,11 +236,11 @@ void *prober(void *arg) {
     
     for(i=0;i<size && hosts.control.active;i++) {
       
-      memcpy(prober_info.arp_request.eh.ether_dhost, tmp[i].mac, ETH_ALEN);
-      
       if(time(NULL) < tmp[i].timeout) {
-      
-        send_arp_probe(tmp[i].ip);
+        
+        pthread_mutex_lock(&(prober_info.control.mutex));
+        send_arp_probe(tmp[i].ip, tmp[i].mac);
+        pthread_mutex_unlock(&(prober_info.control.mutex));
         
       } else {
         pthread_mutex_lock(&(hosts.control.mutex));

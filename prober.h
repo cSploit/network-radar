@@ -28,7 +28,7 @@ int init_prober();
 
 void *prober(void *);
 void begin_nbns_lookup(uint32_t);
-void send_arp_probe(uint32_t);
+void begin_arp_lookup(uint32_t);
 void stop_prober(void);
 
 extern struct prober_data {

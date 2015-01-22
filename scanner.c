@@ -85,7 +85,7 @@ void full_scan() {
 }
 
 /**
- * @brief perform a quick scan sending a NBSTAT request to all hosts of our subnet
+ * @brief perform a quick scan sending ARP requests to all hosts of our subnet
  */
 void local_scan() {
   uint32_t i, broadcast;
@@ -102,7 +102,7 @@ void local_scan() {
   
   for(;i<broadcast && hosts.control.active;i++) {
     
-    send_arp_probe(htonl(i));
+    begin_arp_lookup(htonl(i));
     
     usleep(delay);
   }
