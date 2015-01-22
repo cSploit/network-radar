@@ -17,7 +17,6 @@
 
 #define _GNU_SOURCE
 
-#include <pcap.h>
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
@@ -86,6 +85,9 @@ int get_ifinfo(char *ifname) {
   }
   
   ifinfo.ip_mask = ((struct sockaddr_in *) &(ifr.ifr_addr))->sin_addr.s_addr;
+  
+  ifinfo.ip_subnet = ifinfo.ip_addr & ifinfo.ip_mask;
+  ifinfo.ip_broadcast = ifinfo.ip_addr | ~(ifinfo.ip_mask);
   
   if(ioctl(fd, SIOCGIFMTU, &ifr) == -1) {
     print( WARNING, "ioctl: %s", strerror(errno));
