@@ -34,6 +34,7 @@
 #include "ifinfo.h"
 #include "main.h"
 #include "analyzer.h"
+#include "scanner.h"
 
 void stop(int signal) {
   hosts.control.active = 0;

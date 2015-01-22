@@ -14,33 +14,20 @@
  * You should have received a copy of the GNU General Public License
  * along with cSploit.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef PROBER_H
-#define PROBER_H
+#ifndef SCANNER_H
+#define SCANNER_H
 
-#ifdef HAVE_LIBPCAP
-#include <pcap.h>
-#endif
 
-#include "netdefs.h"
-#include "control.h"
+/** time to scan all private networks ( in ms ) */
+#define FULL_SCAN_MS 600000 // 10 minutes
 
-int init_prober();
+/** time to scal all hosts in the local subnet ( in ms ) */
+#define LOCAL_SCAN_MS 10000 // 10 seconds
 
-void *prober(void *);
-void begin_nbns_lookup(uint32_t);
-void send_arp_probe(uint32_t);
-void stop_prober(void);
+/** number of hosts in private networks */
+#define PRIVATE_NETWORKS_HOSTS 17891328
 
-extern struct prober_data {
-  data_control control;
-  pthread_t tid;
-  int nbns_sockfd;
-#ifdef HAVE_LIBPCAP
-  pcap_t *handle;
-#else
-  int arp_sockfd;
-#endif
-  struct arp_packet arp_request;
-} prober_info;
+void full_scan(void);
+void local_scan(void);
 
 #endif

@@ -21,6 +21,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "logger.h"
 
@@ -31,8 +32,15 @@
 #include "nbns.h"
 #include "prober.h"
 #include "event.h"
+#include "scanner.h"
 
 struct prober_data prober_info;
+  
+struct prober_host_copy {
+  uint32_t ip;
+  uint8_t mac[ETH_ALEN];
+  time_t timeout;
+};
 
 int init_prober() {
 #ifdef HAVE_LIBPCAP
@@ -112,6 +120,7 @@ int init_prober() {
   // build the ethernet header
   
   memcpy(prober_info.arp_request.eh.ether_shost, ifinfo.eth_addr, ETH_ALEN);
+  memset(prober_info.arp_request.eh.ether_dhost, 0xFF, ETH_ALEN);
   prober_info.arp_request.eh.ether_type = htons(ETH_P_ARP);
   
   // build arp header
@@ -150,28 +159,6 @@ void begin_nbns_lookup(uint32_t ip) {
   }
 }
 
-/**
- * @brief perform a full and quick scan sending a NBSTAT request to all hosts
- */
-void full_scan() {
-  uint32_t i, max;
-  struct sockaddr_in addr;
-  
-  max = get_host_max_index();
-  
-  memset(&addr, 0, sizeof(addr));
-  
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(137);
-  
-  for(i=1;i<max;i++) {
-    
-    addr.sin_addr.s_addr = get_host_addr(i);
-    
-    sendto(prober_info.nbns_sockfd, nbns_nbstat_request, NBNS_NBSTATREQ_LEN, 0, (struct sockaddr *) &addr, sizeof(addr));
-  }
-}
-
 void send_arp_probe(uint32_t ip) {
 #ifndef HAVE_LIBPCAP
   struct sockaddr_ll sll;
@@ -200,75 +187,83 @@ void send_arp_probe(uint32_t ip) {
 }
 
 void *prober(void *arg) {
-  uint32_t max_index, i, ip;
+  uint32_t i, size;
   useconds_t delay;
-  struct host *h;
-  time_t timeout;
+  struct prober_host_copy *tmp;
   struct event *e;
+  struct host *h;
   
-  max_index = get_host_max_index();
-  
-  delay = (FULL_SCAN_MS * 1000 / max_index);
-  
-  // quick and full scan on startup
-  full_scan();
+  local_scan();
   
   pthread_mutex_lock(&(hosts.control.mutex));
   
-  do {
+  while(hosts.control.active) {
     
-    for(i=1;i<max_index && hosts.control.active;i++) {
+    tmp = calloc(sizeof(struct prober_host_copy), hosts.size);
+  
+    if(!tmp) {
+      // wait for some change
+      pthread_cond_wait(&(hosts.control.cond), &(hosts.control.mutex));
+      continue; // retry
+    }
+    
+    size = hosts.size;
+    for(i=0;i<size;i++) {
+      tmp[i].ip = hosts.array[i]->ip;
+      tmp[i].timeout = hosts.array[i]->timeout;
+      memcpy(tmp[i].mac, hosts.array[i]->mac, ETH_ALEN);
+    }
+    
+    pthread_mutex_unlock(&(hosts.control.mutex));
+    
+    if(size) {
+      delay = (LOCAL_SCAN_MS * 1000) / size;
+    }
+    
+    // check for hosts.control.active without locking
+    
+    for(i=0;i<size && hosts.control.active;i++) {
       
-      h = hosts.array[i];
+      memcpy(prober_info.arp_request.eh.ether_dhost, tmp[i].mac, ETH_ALEN);
       
-      if(h) {
-        timeout = h->timeout;
+      if(time(NULL) < tmp[i].timeout) {
+      
+        send_arp_probe(tmp[i].ip);
         
-        memcpy(prober_info.arp_request.eh.ether_dhost, h->mac, ETH_ALEN);
       } else {
-        timeout = 0;
-      }
-      
-      pthread_mutex_unlock(&(hosts.control.mutex));
-      
-      if(h) {
-        ip = get_host_addr(i);
+        pthread_mutex_lock(&(hosts.control.mutex));
+        h = get_host(tmp[i].ip);
+        if(h) del_host(h);
+        pthread_mutex_unlock(&(hosts.control.mutex));
         
-        if(time(NULL) < timeout) {
+        if(h) free_host(h);
         
-          send_arp_probe(ip);
+        e = malloc(sizeof(struct event));
+        
+        if(e) {
+          e->type = MAC_LOST;
+          e->ip = tmp[i].ip;
           
+          add_event(e);
         } else {
-          pthread_mutex_lock(&(hosts.control.mutex));
-          hosts.array[i] = NULL;
-          pthread_mutex_unlock(&(hosts.control.mutex));
-          
-          free_host(h);
-          
-          e = malloc(sizeof(struct event));
-          
-          if(e) {
-            e->type = MAC_LOST;
-            e->ip = ip;
-            
-            add_event(e);
-          } else {
-            print( ERROR, "malloc: %s\n", strerror(errno));
-          }
+          print( ERROR, "malloc: %s\n", strerror(errno));
         }
       }
       
       usleep(delay);
-      
-      pthread_mutex_lock(&(hosts.control.mutex));
     }
     
-  } while(hosts.control.active);
+    free(tmp);
+    
+    pthread_mutex_lock(&(hosts.control.mutex));
+  }
   
   pthread_mutex_unlock(&(hosts.control.mutex));
   
   close(prober_info.nbns_sockfd);
   prober_info.nbns_sockfd = -1;
+  
+  print( DEBUG, "quitting");
   
   return NULL;
 }
