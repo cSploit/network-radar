@@ -27,7 +27,9 @@
 #include "sorted_arraylist.h"
 #include "control.h"
 
+/// we tried to DNS resolve this host
 #define HOST_LOOKUP_DNS 1
+/// we tried to NBNS resolve this host
 #define HOST_LOOKUP_NBNS 2
 
 struct host {

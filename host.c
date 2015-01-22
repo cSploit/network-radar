@@ -72,29 +72,6 @@ struct host *create_host(uint32_t ip, uint8_t *mac, char *name) {
   return h;
 }
 
-
-
-#ifndef NDEBUG
-static struct host **dump_ptr;
-# define DUMP_HOSTS() do {\
-    if(!(hosts.size)) { \
-      print( DEBUG, "  no hosts");\
-    } else {\
-      dump_ptr = hosts.array + hosts.size - 1;\
-      print ( DEBUG, "hosts:");\
-      for(;dump_ptr >= hosts.array; dump_ptr--) {\
-        print( DEBUG, "  - %u.%u.%u.%u { %02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX } [ %s ]",\
-              ((uint8_t *) &((**dump_ptr).ip))[0], ((uint8_t *) &((**dump_ptr).ip))[1],\
-              ((uint8_t *) &((**dump_ptr).ip))[2], ((uint8_t *) &((**dump_ptr).ip))[3],\
-              (**dump_ptr).mac[0], (**dump_ptr).mac[1], (**dump_ptr).mac[2], (**dump_ptr).mac[3],\
-              (**dump_ptr).mac[4], (**dump_ptr).mac[5], (**dump_ptr).name);\
-      }\
-    }\
-  } while(0);
-#else /* NDEBUG */
-# define DUMP_HOSTS()
-#endif
-
 /**
  * @brief add an host to the host array
  * @param h the host to add
@@ -102,32 +79,32 @@ static struct host **dump_ptr;
  * 
  * do not add an already existing host!
  */
-int add_host(struct host *h) {
-  int ret;
-  
-  ret = sortedarray_ins((array *) &hosts, (comparable_item *) h);
-  
-  DUMP_HOSTS();
-  
-  return ret;
+inline int add_host(struct host *h) {
+  return sortedarray_ins((array *) &hosts, (comparable_item *) h);
 }
 
-int del_host(struct host *h) {
-  int ret;
-  
-  ret = sortedarray_del((array *) &hosts, (comparable_item *) h);
-  
-  DUMP_HOSTS();
-  
-  return ret;
+/**
+ * @brief delete an host from the host array
+ * @param h the host to delete
+ * @returns 0 on success, -1 on error.
+ */
+inline int del_host(struct host *h) {
+  return sortedarray_del((array *) &hosts, (comparable_item *) h);
 }
 
-void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) {
+/**
+ * @brief default callback to call whence an host has been found.
+ * @param mac host mac address
+ * @param ip host ip address
+ * @param name hostname
+ * @param lstatus lookup status
+ */
+void on_host_found(uint8_t *mac, uint32_t ip, char *name, char lstatus) {
   struct host *h;
   struct event *e;
   int old_errno;
   uint8_t e_type;
-  char lstatus, host_has_name;
+  char prev_lstatus, host_has_name;
   
   e_type = NONE;
   
@@ -169,20 +146,18 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char assumed_lstatus) 
   
   h->timeout = time(NULL) + HOST_TIMEOUT;
   
-  lstatus = h->lookup_status | assumed_lstatus;
+  prev_lstatus = h->lookup_status | lstatus;
   h->lookup_status |= (HOST_LOOKUP_DNS|HOST_LOOKUP_NBNS);
   
   host_has_name = h->name != NULL;
   
-  DUMP_HOSTS();
-  
   pthread_mutex_unlock(&(hosts.control.mutex));
   
-  if(!(lstatus & HOST_LOOKUP_DNS) && !host_has_name) {
+  if(!(prev_lstatus & HOST_LOOKUP_DNS) && !host_has_name) {
     begin_dns_lookup(ip);
   }
   
-  if(!(lstatus & HOST_LOOKUP_NBNS)) {
+  if(!(prev_lstatus & HOST_LOOKUP_NBNS)) {
     begin_nbns_lookup(ip);
   }
   
