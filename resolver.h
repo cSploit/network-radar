@@ -24,6 +24,12 @@
 
 #include "control.h"
 
+/// maximum size of the hosts file ( in bytes )
+#define HOSTS_MAXSIZE           ( 128 * 1024 )
+
+/// path to the hosts file
+#define PATH_HOSTS              "/etc/hosts"
+
 void begin_dns_lookup(uint32_t);
 int start_resolver(void);
 void stop_resolver(void);

@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <netdb.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "logger.h"
@@ -120,6 +122,12 @@ void *resolver(void *arg) {
   return NULL;
 }
 
+static int can_use_hosts_file() {
+  struct stat st;
+  
+  return !stat(PATH_HOSTS, &st) && st.st_size < HOSTS_MAXSIZE;
+}
+
 int start_resolver() {
   int ret, optmask;
   struct ares_options options;
@@ -134,13 +142,12 @@ int start_resolver() {
   memset(&options, 0, sizeof(struct ares_options));
   
   options.flags = ARES_FLAG_STAYOPEN;
-  
-#ifndef RESOLVER_USE_HOST_FILE
-  optmask = ARES_OPT_FLAGS | ARES_OPT_LOOKUPS;
-  options.lookups = "b";
-#else
   optmask = ARES_OPT_FLAGS;
-#endif
+  
+  if(!can_use_hosts_file()) {
+    optmask |= ARES_OPT_LOOKUPS;
+    options.lookups = "b";
+  }
   
   ret = ares_init_options(&(resolver_info.channel), &options, optmask);
   
