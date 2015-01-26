@@ -113,16 +113,21 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char lstatus) {
   h = get_host(ip);
   
   if(h) {
+    
+    if(name) {
+      if(h->name) {
+        e_type = NAME_CHANGED;
+        free(h->name);
+      } else {
+        e_type = NEW_NAME;
+      }
+      h->name = name;
+    }
+    
     if(memcmp(mac, h->mac, ETH_ALEN)) {
       memcpy(h->mac, mac, ETH_ALEN);
       
       e_type = MAC_CHANGED;
-    }
-    
-    if(name || e_type == MAC_CHANGED) {
-      if(h->name)
-        free(h->name);
-      h->name = name;
     }
     
   } else {
@@ -141,7 +146,7 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char lstatus) {
       return;
     }
     
-    e_type = NEW_MAC;
+    e_type = (name ? NEW_NAME : NEW_MAC);
   }
   
   h->timeout = time(NULL) + HOST_TIMEOUT;
@@ -160,11 +165,6 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char lstatus) {
   if(!(prev_lstatus & HOST_LOOKUP_NBNS)) {
     begin_nbns_lookup(ip);
   }
-  
-  if(name)
-    e_type = NEW_NAME;
-  else if(e_type == NONE)
-    return;
   
   e = malloc(sizeof(struct event));
   
