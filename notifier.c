@@ -30,11 +30,86 @@
 
 pthread_t notifier_tid = 0;
 
+#define MAC_ADDRESS_STRLEN 17
+
+static void print_host_event( char etype, uint32_t ip) {
+	char mac_str[MAC_ADDRESS_STRLEN + 1],
+       ip_str[INET_ADDRSTRLEN + 1],
+       *etype_str,
+       *name,
+       next_etype;
+  struct host *h;
+  
+  if(!inet_ntop(AF_INET, &(ip), ip_str, INET_ADDRSTRLEN)) {
+		print( ERROR, "inet_ntop(%u): %s\n", ip, strerror(errno));
+		return;
+	}
+  
+  name = NULL;
+  mac_str[0] = '\0';
+  
+  if(etype != MAC_LOST) {
+    pthread_mutex_lock(&(hosts.control.mutex));
+    
+    h = get_host(ip);
+    
+    if(h) {
+      snprintf(mac_str, MAC_ADDRESS_STRLEN + 1, "%02hhX:%02hhX:%02hhX:%02hhX:%02hhX:%02hhX",
+        h->mac[0], h->mac[1], h->mac[2], h->mac[3], h->mac[4], h->mac[5] );
+      
+      if(h->name) {
+        name = strdup(h->name);
+      }
+    }
+    
+    pthread_mutex_unlock(&(hosts.control.mutex));
+  }
+  
+  if(mac_str[0] == '\0') {
+    strncpy(mac_str, "00:00:00:00:00:00", MAC_ADDRESS_STRLEN + 1);
+  }
+
+	again:
+	
+	next_etype = NONE;
+
+	switch(etype) {
+		case NEW_MAC:
+			etype_str = "HOST_ADD ";
+			break;
+		case MAC_CHANGED:
+			next_etype = NEW_MAC;
+		case MAC_LOST:
+			etype_str = "HOST_DEL ";
+			break;
+		case NAME_CHANGED:
+		case NEW_NAME:
+			etype_str = "HOST_EDIT";
+			break;
+		default:
+			print(WARNING, "unknown event 0x%02hhX", etype);
+			return;
+	}
+	
+	if ( etype == MAC_LOST || etype == MAC_CHANGED ) {
+		printf("%s { ip: %s }\n", etype_str, ip_str);
+	} else {
+		printf("%s { mac: %s, ip: %s, name: %s }\n",
+				etype_str, mac_str, ip_str, ( name ? name : "" ) );
+	}
+	
+	if(next_etype != NONE) {
+		etype = next_etype;
+		goto again;
+	}
+  
+  if(name) {
+    free(name);
+  }
+}
+
 void *notifier(void *arg) {
   struct event *e;
-  const char *name;
-  struct host *h;
-  char ip_str[INET_ADDRSTRLEN + 1];
   
   pthread_mutex_lock(&(events.control.mutex));
   
@@ -47,42 +122,9 @@ void *notifier(void *arg) {
     
     if(!e) continue;
     
-    if(!inet_ntop(AF_INET, &(e->ip), ip_str, INET_ADDRSTRLEN)) {
-      print( ERROR, "inet_ntop(%u): %s\n", e->ip, strerror(errno));
-      ip_str[0] = '\0';
-    }
-    
-    name = NULL;
-    
-    pthread_mutex_lock(&(hosts.control.mutex));
-    
-    h = get_host(e->ip);
-    
-    if(h && h->name)
-      name = strdup(h->name);
-    
-    pthread_mutex_unlock(&(hosts.control.mutex));
-    
-    switch(e->type) {
-      case MAC_LOST:
-        printf("DEL_HOST %*s\n", INET_ADDRSTRLEN, ip_str);
-        break;
-      case MAC_CHANGED:
-        printf("DEL_HOST %*s\n", INET_ADDRSTRLEN, ip_str);
-      case NEW_MAC:
-        printf("NEW_HOST %*s %s\n", INET_ADDRSTRLEN, ip_str, (name ? name : ""));
-        break;
-      case NAME_CHANGED:
-        printf("DEL_NAME %*s\n", INET_ADDRSTRLEN, ip_str);
-      case NEW_NAME:
-        printf("NEW_NAME %*s %s\n", INET_ADDRSTRLEN, ip_str, (name ? name : ""));
-        break;
-    }
+    print_host_event(e->type, e->ip);
     
     free(e);
-    
-    if(name)
-      free((void *) name);
     
     fflush(stdout);
   }
