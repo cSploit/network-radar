@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   
-  if(open_logfile("./network-monitor.log")) {
+  if(open_logfile("./network-radar.log")) {
     print( ERROR, "cannot open logfile");
     return EXIT_FAILURE;
   }

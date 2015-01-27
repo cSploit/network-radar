@@ -24,7 +24,7 @@ CFLAGS += -DPROFILE -DRESOLVER_USE_HOST_FILE -DHAVE_LIBPCAP
 SRCS:=$(wildcard *.c )
 OBJS := $(SRCS:.c=.o)
 
-network-monitor: $(OBJS) ../cSploitCommon/libcSploitCommon.so
+network-radar: $(OBJS) ../cSploitCommon/libcSploitCommon.so
 	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 	
 ../cSploitCommon/libcSploitCommon.so:
@@ -34,4 +34,4 @@ network-monitor: $(OBJS) ../cSploitCommon/libcSploitCommon.so
 	$(CC) $(CFLAGS) -c -o $@ $<
 	
 clean:
-	rm -f network-monitor $(OBJS)
+	rm -f network-radar $(OBJS)
