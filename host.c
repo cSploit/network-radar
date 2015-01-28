@@ -166,6 +166,9 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char lstatus) {
     begin_nbns_lookup(ip);
   }
   
+  if(e_type == NONE)
+    return;
+  
   e = malloc(sizeof(struct event));
   
   if(!e) {
