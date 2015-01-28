@@ -275,6 +275,10 @@ void *prober(void *arg) {
   close(prober_info.nbns_sockfd);
   prober_info.nbns_sockfd = -1;
   
+#ifdef HAVE_LIBPCAP
+  pcap_close(prober_info.handle);
+#endif
+  
   print( DEBUG, "quitting");
   
   return NULL;
