@@ -85,6 +85,8 @@ void *sniffer(void *arg) {
 # endif /* PROFILE */
   }
   
+  pcap_close(sniffer_info.handle);
+  
 #else /* HAVE_LIBPCAP */
   int pktlen, caplen;
   struct sockaddr_ll from;
@@ -175,8 +177,6 @@ void *sniffer(void *arg) {
 # endif
     
   }
-  
-  pcap_close(sniffer_info.handle);
 
 #endif /* HAVE_LIBPCAP */
 
