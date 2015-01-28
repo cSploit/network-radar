@@ -175,6 +175,8 @@ void *sniffer(void *arg) {
 # endif
     
   }
+  
+  pcap_close(sniffer_info.handle);
 
 #endif /* HAVE_LIBPCAP */
 
@@ -327,7 +329,7 @@ void stop_sniff() {
     return;
   
 #ifdef HAVE_LIBPCAP
-  pcap_close(sniffer_info.handle);
+  pcap_breakloop(sniffer_info.handle);
 #else
   close(sniffer_info.sockfd);
 #endif
