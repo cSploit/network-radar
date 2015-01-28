@@ -172,6 +172,8 @@ int main(int argc, char **argv) {
   stop_notifier();
   stop_resolver();
   
+  fini_hosts();
+  
   destroy_controls();
   
   return ret;

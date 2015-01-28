@@ -57,5 +57,6 @@ int add_host(struct host *);
 int del_host(struct host *);
 struct host *get_host(uint32_t);
 void on_host_found(uint8_t *, uint32_t , char *, char);
+void fini_hosts();
 
 #endif

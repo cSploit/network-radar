@@ -181,3 +181,20 @@ void on_host_found(uint8_t *mac, uint32_t ip, char *name, char lstatus) {
   
   add_event(e);
 }
+
+void fini_hosts() {
+  register uint32_t i;
+  
+  pthread_mutex_lock(&(hosts.control.mutex));
+  
+  for(i=0;i<hosts.size;i++) {
+    free_host(hosts.array[i]);
+  }
+  
+  free(hosts.array);
+  
+  hosts.array = NULL;
+  hosts.size = 0;
+  
+  pthread_mutex_unlock(&(hosts.control.mutex));
+}
