@@ -207,6 +207,8 @@ void *prober(void *arg) {
   
   local_scan();
   
+  delay = 0;
+  
   pthread_mutex_lock(&(hosts.control.mutex));
   
   while(hosts.control.active) {
