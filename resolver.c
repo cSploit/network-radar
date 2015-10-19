@@ -58,7 +58,7 @@ void on_query_end(void *arg, int status, int timeouts, struct hostent *ent) {
   
   if(h && !(h->name)) {
     
-    e = malloc(sizeof(struct event));
+    e = (struct event *) malloc(sizeof(struct event));
     
     if(!e) {
       print( ERROR, "malloc: %s\n", strerror(errno));
