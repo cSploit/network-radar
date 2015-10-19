@@ -22,7 +22,7 @@
 #include <stdint.h>
 #include <ares.h>
 
-#include "control.h"
+#include <csploit/control.h>
 
 /// maximum size of the hosts file ( in bytes )
 #define HOSTS_MAXSIZE           ( 128 * 1024 )

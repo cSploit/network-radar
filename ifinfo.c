@@ -25,7 +25,8 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include "logger.h"
+#include <csploit/logger.h>
+
 #include "ifinfo.h"
 #include "netdefs.h"
 

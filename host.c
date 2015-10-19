@@ -20,8 +20,8 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <assert.h>
-
-#include "logger.h"
+#include <csploit/sorted_arraylist.h>
+#include <csploit/logger.h>
 
 #include "ifinfo.h"
 #include "host.h"
@@ -29,7 +29,7 @@
 #include "event.h"
 #include "prober.h"
 #include "resolver.h"
-#include "sorted_arraylist.h"
+
 
 struct hosts_data hosts;
 

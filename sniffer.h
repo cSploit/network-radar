@@ -22,7 +22,7 @@
 #endif
 #include <pthread.h>
 
-#include "control.h"
+#include <csploit/control.h>
 
 extern struct sniff_data {
   data_control control;

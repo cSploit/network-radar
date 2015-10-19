@@ -28,9 +28,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "logger.h"
+#include <csploit/logger.h>
+#include <csploit/control.h>
 
-#include "control.h"
 #include "event.h"
 #include "host.h"
 #include "resolver.h"

@@ -17,15 +17,10 @@
 #ifndef ANALYZER_H
 #define ANALYZER_H
 
-#ifdef HAVE_CONFIG_H
-# include <config.h>
-#endif
-
 #include <pthread.h>
 
-
-#include "list.h"
-#include "control.h"
+#include <csploit/list.h>
+#include <csploit/control.h>
 
 extern struct analyzer_data {
   data_control control;
