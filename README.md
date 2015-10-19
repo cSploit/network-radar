@@ -1,6 +1,8 @@
 network-radar
 =============
 
+[![Build Status](https://travis-ci.org/cSploit/network-radar.svg?branch=master)](https://travis-ci.org/cSploit/network-radar)
+
 ## what it is
 
 `network-radar` is the native replacement for the old dSploit `NetworkDiscovery` .
